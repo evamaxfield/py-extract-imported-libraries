@@ -32,4 +32,6 @@ print(dependencies)
 # Output: ['pathlib', 'tree_sitter', 'tree_sitter_language_pack', 'typing']
 ```
 
-**TODO:** Figure out if I can separate out stdlib vs third-party libraries.
+## TODO
+- Configure as package and release
+- Figure out if I can separate out stdlib vs third-party libraries.
