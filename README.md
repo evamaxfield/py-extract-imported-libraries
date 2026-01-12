@@ -6,10 +6,6 @@ Small Python utility to extract imported libraries from source code files in var
 
 - Python
 - R
-- Go
-- Rust
-- JavaScript
-- TypeScript
 
 # Usage
 
@@ -17,20 +13,22 @@ Small Python utility to extract imported libraries from source code files in var
 from eil import Extractor
 
 extractor = Extractor()
-dependencies = extractor.extract_from_file("path/to/your/file.py")
-print(dependencies)
+imported_libs = extractor.extract_from_file("path/to/your/file.py")
+print(imported_libs)
 ```
 
-For example, here are the dependencies extracted from the `extractor.py` file itself:
+For example, here are the imported libraries extracted from the `main.py` file itself:
 
 ```python
 from eil import Extractor
 
 extractor = Extractor()
-dependencies = extractor.extract_from_file("extractor.py")
-print(dependencies)
-# Output: ['pathlib', 'tree_sitter', 'tree_sitter_language_pack', 'typing']
+imported_libs = extractor.extract_from_file("main.py")
+print(imported_libs)
+# Output:
+# ImportedLibraries(
+#   stdlib={'collections', 'pathlib', 'dataclasses', 'typing'},
+#   third_party={'tree_sitter_language_pack', 'tree_sitter'},
+#   first_party={'data'},
+# )
 ```
-
-## TODO
-- Figure out if I can separate out stdlib vs third-party libraries.
