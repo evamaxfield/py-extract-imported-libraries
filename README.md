@@ -7,6 +7,14 @@ Small Python utility to extract imported libraries from source code files in var
 - Python
 - R
 
+# Installation
+
+You can install the package via pip:
+
+```bash
+pip install pyeil
+```
+
 # Usage
 
 ```python
