@@ -264,13 +264,13 @@ class Extractor:
 
         return dependencies
 
-    def extract_from_file(self: Self, file_path: str) -> set[str]:
+    def extract_from_file(self: Self, file_path: str | Path) -> set[str]:
         """Extract dependencies from a file based on its extension."""
         path = Path(file_path)
-
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
+        # Parse
         code = path.read_text(encoding="utf-8")
 
         # Map file extensions to extraction methods
@@ -286,10 +286,11 @@ class Extractor:
             ".tsx": self.extract_typescript_dependencies,
         }
 
+        # Parse and return or handle unsupported extension
         if path.suffix in ext_map:
             return ext_map[path.suffix](code)
-        else:
-            supported_exts = ", ".join(sorted(set(ext_map.keys())))
-            raise ValueError(
-                f"Unsupported file extension: {path.suffix}. Supported: {supported_exts}"
-            )
+
+        supported_exts = ", ".join(sorted(set(ext_map.keys())))
+        raise ValueError(
+            f"Unsupported file extension: {path.suffix}. Supported: {supported_exts}"
+        )
