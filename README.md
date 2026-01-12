@@ -14,7 +14,7 @@ Small Python utility to extract imported libraries from source code files in var
 # Usage
 
 ```python
-from pyEIL import Extractor
+from eil import Extractor
 
 extractor = Extractor()
 dependencies = extractor.extract_from_file("path/to/your/file.py")
@@ -24,7 +24,7 @@ print(dependencies)
 For example, here are the dependencies extracted from the `extractor.py` file itself:
 
 ```python
-from pyEIL import Extractor
+from eil import Extractor
 
 extractor = Extractor()
 dependencies = extractor.extract_from_file("extractor.py")

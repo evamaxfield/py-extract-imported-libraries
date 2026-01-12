@@ -12,5 +12,4 @@ __email__ = "evamaxfieldbrown@gmail.com"
 
 from .main import Extractor
 
-
 __all__ = ["Extractor", __author__, __email__, __version__]

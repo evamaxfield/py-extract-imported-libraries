@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Set, Self
+from typing import Self
 
-from tree_sitter import Parser, Query, QueryCursor, Language
+from tree_sitter import Language, Parser, Query, QueryCursor
 from tree_sitter_language_pack import get_language
 
 ###############################################################################
@@ -30,7 +30,7 @@ class Extractor:
             except Exception as e:
                 print(f"Warning: Could not load {lang}: {e}")
 
-    def extract_python_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_python_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from Python code."""
         self._load_language("python")
         tree = self.parsers["python"].parse(bytes(code, "utf8"))
@@ -65,7 +65,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_r_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_r_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from R code."""
         self._load_language("r")
         tree = self.parsers["r"].parse(bytes(code, "utf8"))
@@ -110,7 +110,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_go_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_go_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from Go code."""
         self._load_language("go")
         tree = self.parsers["go"].parse(bytes(code, "utf8"))
@@ -138,7 +138,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_rust_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_rust_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from Rust code."""
         self._load_language("rust")
         tree = self.parsers["rust"].parse(bytes(code, "utf8"))
@@ -181,7 +181,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_javascript_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_javascript_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from JavaScript code."""
         self._load_language("javascript")
         tree = self.parsers["javascript"].parse(bytes(code, "utf8"))
@@ -222,9 +222,7 @@ class Extractor:
         for i, func_node in enumerate(func_nodes):
             func_name = code[func_node.start_byte : func_node.end_byte]
             if func_name == "require" and i < len(import_nodes):
-                import_path = code[
-                    import_nodes[i].start_byte : import_nodes[i].end_byte
-                ]
+                import_path = code[import_nodes[i].start_byte : import_nodes[i].end_byte]
                 import_path = import_path.strip("\"'")
                 if not import_path.startswith(".") and not import_path.startswith("/"):
                     package = import_path.split("/")[0]
@@ -234,7 +232,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_typescript_dependencies(self: Self, code: str) -> Set[str]:
+    def extract_typescript_dependencies(self: Self, code: str) -> set[str]:
         """Extract dependencies from TypeScript code (similar to JavaScript)."""
         self._load_language("typescript")
         tree = self.parsers["typescript"].parse(bytes(code, "utf8"))
@@ -266,7 +264,7 @@ class Extractor:
 
         return dependencies
 
-    def extract_from_file(self: Self, file_path: str) -> Set[str]:
+    def extract_from_file(self: Self, file_path: str) -> set[str]:
         """Extract dependencies from a file based on its extension."""
         path = Path(file_path)
 

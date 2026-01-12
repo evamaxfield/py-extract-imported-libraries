@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
-from typing import Callable
-
-from pyEIL import Extractor
-import pytest
+from collections.abc import Callable
 from pathlib import Path
+
+import pytest
+
+from eil import Extractor
 
 ###############################################################################
 
@@ -48,6 +49,7 @@ EXTRACTOR_SOURCE_CODE_FILE = Path(__file__).parent.parent / "main.py"
 
 
 ###############################################################################
+
 
 @pytest.mark.parametrize(
     "code, extraction_func, expected_deps",
