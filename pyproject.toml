@@ -48,6 +48,8 @@ lint = [
 dev = [
   "ipython",
   "jupyterlab",
+]
+test = [
   "pytest>=9",
 ]
 
