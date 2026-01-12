@@ -9,7 +9,7 @@ build-backend = "setuptools.build_meta"
 # package basics
 # https://peps.python.org/pep-0621/
 [project]
-name = "eil"
+name = "pyeil"
 description = "Extract imported libraries from Python, R, and other source code files using tree-sitter."
 keywords = []
 readme = "README.md"
@@ -67,7 +67,7 @@ include-package-data = true
 exclude = ["*docs/*", "*tests/*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.yaml", "py.typed"]
+"*" = ["*.yaml", "py.typed", "data/stdlibs.yml"]
 
 # tools
 # https://github.com/charliermarsh/ruff
