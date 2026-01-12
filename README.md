@@ -33,5 +33,4 @@ print(dependencies)
 ```
 
 ## TODO
-- Configure as package and release
 - Figure out if I can separate out stdlib vs third-party libraries.

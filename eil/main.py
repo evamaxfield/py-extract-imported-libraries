@@ -1,8 +1,25 @@
+#!/usr/bin/env python
+
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
 
 from tree_sitter import Language, Parser, Query, QueryCursor
 from tree_sitter_language_pack import get_language
+
+from .data import load_stdlibs
+
+###############################################################################
+
+
+@dataclass
+class ImportedLibraries:
+    """Container for categorized dependencies."""
+
+    stdlib: set[str]
+    third_party: set[str]
+
 
 ###############################################################################
 
@@ -20,6 +37,7 @@ class Extractor:
     def __init__(self) -> None:
         self.languages: dict[str, Language] = {}
         self.parsers: dict[str, Parser] = {}
+        self.stdlibs = load_stdlibs()
 
     def _load_language(self: Self, lang: str) -> None:
         """Load a language parser if not already loaded."""
@@ -30,8 +48,32 @@ class Extractor:
             except Exception as e:
                 print(f"Warning: Could not load {lang}: {e}")
 
-    def extract_python_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from Python code."""
+    def _categorize_libraries(
+        self: Self,
+        deps: set[str],
+        stdlib_set: set[str],
+        stdlib_check_func: Callable | None = None,
+    ) -> ImportedLibraries:
+        """Categorize i into stdlib and third-party."""
+        stdlib = set()
+        third_party = set()
+
+        for dep in deps:
+            if stdlib_check_func:
+                if stdlib_check_func(dep):
+                    stdlib.add(dep)
+                else:
+                    third_party.add(dep)
+            else:
+                if dep in stdlib_set:
+                    stdlib.add(dep)
+                else:
+                    third_party.add(dep)
+
+        return ImportedLibraries(stdlib=stdlib, third_party=third_party)
+
+    def extract_python_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from Python code."""
         self._load_language("python")
         tree = self.parsers["python"].parse(bytes(code, "utf8"))
 
@@ -54,19 +96,19 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
         for node in captures.get("import", []):
             dep_name = code[node.start_byte : node.end_byte]
             top_level = dep_name.split(".")[0]
-            dependencies.add(top_level)
+            imported_libs.add(top_level)
 
-        return dependencies
+        return self._categorize_libraries(imported_libs, self.stdlibs["python"])
 
-    def extract_r_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from R code."""
+    def extract_r_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from R code."""
         self._load_language("r")
         tree = self.parsers["r"].parse(bytes(code, "utf8"))
 
@@ -86,7 +128,7 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
@@ -100,18 +142,18 @@ class Extractor:
                     if pkg_node.start_byte > func_node.start_byte:
                         pkg_text = code[pkg_node.start_byte : pkg_node.end_byte]
                         pkg_text = pkg_text.strip("\"'")
-                        dependencies.add(pkg_text)
+                        imported_libs.add(pkg_text)
                         break
 
         for node in package_nodes:
             pkg_text = code[node.start_byte : node.end_byte]
             pkg_text = pkg_text.strip("\"'")
-            dependencies.add(pkg_text)
+            imported_libs.add(pkg_text)
 
-        return dependencies
+        return self._categorize_libraries(imported_libs, self.stdlibs["r"])
 
-    def extract_go_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from Go code."""
+    def extract_go_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from Go code."""
         self._load_language("go")
         tree = self.parsers["go"].parse(bytes(code, "utf8"))
 
@@ -123,23 +165,24 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
         for node in captures.get("import", []):
             import_path = code[node.start_byte : node.end_byte]
-            # Remove quotes
             import_path = import_path.strip('"')
-            # Filter out standard library imports (no dots in path typically)
-            # Keep third-party packages (usually have domain names like github.com)
-            if "." in import_path or "/" in import_path:
-                dependencies.add(import_path)
+            # Keep all imports (both stdlib and third-party)
+            imported_libs.add(import_path)
 
-        return dependencies
+        # Go stdlib check: no dots or slashes means stdlib
+        def is_go_stdlib(import_path: str) -> bool:
+            return "." not in import_path and "/" not in import_path
 
-    def extract_rust_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from Rust code."""
+        return self._categorize_libraries(imported_libs, set(), stdlib_check_func=is_go_stdlib)
+
+    def extract_rust_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from Rust code."""
         self._load_language("rust")
         tree = self.parsers["rust"].parse(bytes(code, "utf8"))
 
@@ -169,20 +212,20 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
         for node in captures.get("crate", []):
             crate_name = code[node.start_byte : node.end_byte]
-            # Filter out std library and common keywords
-            if crate_name not in ("std", "core", "alloc", "crate", "self", "super"):
-                dependencies.add(crate_name)
+            # Don't filter here - we'll categorize everything
+            if crate_name not in ("crate", "self", "super"):
+                imported_libs.add(crate_name)
 
-        return dependencies
+        return self._categorize_libraries(imported_libs, self.stdlibs["rust"])
 
-    def extract_javascript_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from JavaScript code."""
+    def extract_javascript_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from JavaScript code."""
         self._load_language("javascript")
         tree = self.parsers["javascript"].parse(bytes(code, "utf8"))
 
@@ -198,7 +241,7 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
@@ -213,7 +256,7 @@ class Extractor:
                 # Handle scoped packages like @babel/core
                 if package.startswith("@") and "/" in import_path:
                     package = "/".join(import_path.split("/")[:2])
-                dependencies.add(package)
+                imported_libs.add(package)
 
         # Also check for require() calls
         func_nodes = captures.get("func", [])
@@ -228,12 +271,20 @@ class Extractor:
                     package = import_path.split("/")[0]
                     if package.startswith("@") and "/" in import_path:
                         package = "/".join(import_path.split("/")[:2])
-                    dependencies.add(package)
+                    imported_libs.add(package)
 
-        return dependencies
+        # Check for node: prefix or in stdlib list
+        def is_nodejs_stdlib(package: str) -> bool:
+            if package.startswith("node:"):
+                return True
+            return package in self.stdlibs["javascript"]
 
-    def extract_typescript_dependencies(self: Self, code: str) -> set[str]:
-        """Extract dependencies from TypeScript code (similar to JavaScript)."""
+        return self._categorize_libraries(
+            imported_libs, set(), stdlib_check_func=is_nodejs_stdlib
+        )
+
+    def extract_typescript_libraries(self: Self, code: str) -> ImportedLibraries:
+        """Extract imported libraries from TypeScript code (similar to JavaScript)."""
         self._load_language("typescript")
         tree = self.parsers["typescript"].parse(bytes(code, "utf8"))
 
@@ -249,7 +300,7 @@ class Extractor:
             """,
         )
 
-        dependencies = set()
+        imported_libs = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
@@ -260,12 +311,19 @@ class Extractor:
                 package = import_path.split("/")[0]
                 if package.startswith("@") and "/" in import_path:
                     package = "/".join(import_path.split("/")[:2])
-                dependencies.add(package)
+                imported_libs.add(package)
 
-        return dependencies
+        def is_nodejs_stdlib(package: str) -> bool:
+            if package.startswith("node:"):
+                return True
+            return package in self.stdlibs["javascript"]
 
-    def extract_from_file(self: Self, file_path: str | Path) -> set[str]:
-        """Extract dependencies from a file based on its extension."""
+        return self._categorize_libraries(
+            imported_libs, set(), stdlib_check_func=is_nodejs_stdlib
+        )
+
+    def extract_from_file(self: Self, file_path: str | Path) -> ImportedLibraries:
+        """Extract imported libraries from a file based on its extension."""
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
@@ -275,15 +333,15 @@ class Extractor:
 
         # Map file extensions to extraction methods
         ext_map = {
-            ".py": self.extract_python_dependencies,
-            ".r": self.extract_r_dependencies,
-            ".R": self.extract_r_dependencies,
-            ".go": self.extract_go_dependencies,
-            ".rs": self.extract_rust_dependencies,
-            ".js": self.extract_javascript_dependencies,
-            ".jsx": self.extract_javascript_dependencies,
-            ".ts": self.extract_typescript_dependencies,
-            ".tsx": self.extract_typescript_dependencies,
+            ".py": self.extract_python_libraries,
+            ".r": self.extract_r_libraries,
+            ".R": self.extract_r_libraries,
+            ".go": self.extract_go_libraries,
+            ".rs": self.extract_rust_libraries,
+            ".js": self.extract_javascript_libraries,
+            ".jsx": self.extract_javascript_libraries,
+            ".ts": self.extract_typescript_libraries,
+            ".tsx": self.extract_typescript_libraries,
         }
 
         # Parse and return or handle unsupported extension

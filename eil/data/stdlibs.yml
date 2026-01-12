@@ -1,0 +1,106 @@
+# Standard library definitions for supported languages
+
+r:
+  - base
+  - compiler
+  - datasets
+  - graphics
+  - grDevices
+  - grid
+  - methods
+  - parallel
+  - splines
+  - stats
+  - stats4
+  - tcltk
+  - tools
+  - translations
+  - utils
+
+rust:
+  - std
+  - core
+  - alloc
+  - proc_macro
+  - test
+
+javascript:
+  - assert
+  - buffer
+  - child_process
+  - cluster
+  - crypto
+  - dgram
+  - dns
+  - domain
+  - events
+  - fs
+  - http
+  - https
+  - net
+  - os
+  - path
+  - punycode
+  - querystring
+  - readline
+  - repl
+  - stream
+  - string_decoder
+  - timers
+  - tls
+  - tty
+  - url
+  - util
+  - v8
+  - vm
+  - zlib
+  - async_hooks
+  - http2
+  - perf_hooks
+  - trace_events
+  - worker_threads
+  - inspector
+  - process
+  - console
+  - module
+
+typescript:
+  # TypeScript uses Node.js stdlib, same as JavaScript
+  - assert
+  - buffer
+  - child_process
+  - cluster
+  - crypto
+  - dgram
+  - dns
+  - domain
+  - events
+  - fs
+  - http
+  - https
+  - net
+  - os
+  - path
+  - punycode
+  - querystring
+  - readline
+  - repl
+  - stream
+  - string_decoder
+  - timers
+  - tls
+  - tty
+  - url
+  - util
+  - v8
+  - vm
+  - zlib
+  - async_hooks
+  - http2
+  - perf_hooks
+  - trace_events
+  - worker_threads
+  - inspector
+  - process
+  - console
+  - module
