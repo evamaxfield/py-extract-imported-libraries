@@ -23,11 +23,15 @@ clean:
 # install with all deps
 install:
 	pip install uv
-	uv pip install -r requirements.txt
+	uv pip install -e '.[dev,lint]'
 
 # lint, format, and check all files
 lint:
 	pre-commit run --all-files
+
+# run tests
+test:
+	pytest .
 
 ###############################################################################
 # Release and versioning
