@@ -10,6 +10,6 @@ except PackageNotFoundError:
 __author__ = "Eva Maxfield Brown"
 __email__ = "evamaxfieldbrown@gmail.com"
 
-from .main import Extractor
+from .main import Extractor, ImportedLibraries
 
-__all__ = ["Extractor", __author__, __email__, __version__]
+__all__ = ["Extractor", "ImportedLibraries", __author__, __email__, __version__]

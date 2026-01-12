@@ -19,6 +19,7 @@ class ImportedLibraries:
 
     stdlib: set[str]
     third_party: set[str]
+    first_party: set[str]
 
 
 ###############################################################################
@@ -52,11 +53,13 @@ class Extractor:
         self: Self,
         deps: set[str],
         stdlib_set: set[str],
+        first_party: set[str] | None = None,
         stdlib_check_func: Callable | None = None,
     ) -> ImportedLibraries:
-        """Categorize i into stdlib and third-party."""
+        """Categorize imports into stdlib, third-party, and first-party."""
         stdlib = set()
         third_party = set()
+        first_party_set = first_party or set()
 
         for dep in deps:
             if stdlib_check_func:
@@ -70,7 +73,11 @@ class Extractor:
                 else:
                     third_party.add(dep)
 
-        return ImportedLibraries(stdlib=stdlib, third_party=third_party)
+        return ImportedLibraries(
+            stdlib=stdlib,
+            third_party=third_party,
+            first_party=first_party_set
+        )
 
     def extract_python_libraries(self: Self, code: str) -> ImportedLibraries:
         """Extract imported libraries from Python code."""
@@ -91,21 +98,76 @@ class Extractor:
               module_name: (dotted_name) @import)
             
             (import_from_statement
-              module_name: (relative_import
-                (dotted_name) @import))
+              module_name: (relative_import) @relative_import)
             """,
         )
 
         imported_libs = set()
+        first_party = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
+        # Handle absolute imports
         for node in captures.get("import", []):
+            # Check if this is part of a relative import by examining the parent
+            parent = node.parent
+            if parent and parent.type == "relative_import":
+                # Skip - will be handled in relative imports section
+                continue
+                
             dep_name = code[node.start_byte : node.end_byte]
             top_level = dep_name.split(".")[0]
             imported_libs.add(top_level)
 
-        return self._categorize_libraries(imported_libs, self.stdlibs["python"])
+        # Handle relative imports (first-party)
+        for node in captures.get("relative_import", []):
+            # Get the full import statement to extract the module
+            import_statement = node.parent
+            if import_statement and import_statement.type == "import_from_statement":
+                # Get the full text of the import statement
+                stmt_text = code[import_statement.start_byte : import_statement.end_byte]
+                
+                # Extract what comes after "from ... import"
+                # Handle cases like:
+                # - "from . import utils" -> utils
+                # - "from .utils import helper" -> utils  
+                # - "from .. import config" -> config
+                # - "from ..config import settings" -> config
+                
+                # First check if there's a dotted_name in the relative_import
+                has_dotted = False
+                for child in node.children:
+                    if child.type == "dotted_name":
+                        module_text = code[child.start_byte : child.end_byte]
+                        top_level = module_text.split(".")[0]
+                        first_party.add(top_level)
+                        has_dotted = True
+                        break
+                
+                # If no dotted_name in relative_import, check what's imported
+                if not has_dotted:
+                    # Look for the name being imported after "import"
+                    for child in import_statement.children:
+                        if child.type == "dotted_name":
+                            # This is after the "import" keyword
+                            module_text = code[child.start_byte : child.end_byte]
+                            top_level = module_text.split(".")[0]
+                            first_party.add(top_level)
+                            break
+                        elif child.type == "aliased_import":
+                            # Handle "from . import utils as u"
+                            for subchild in child.children:
+                                if subchild.type == "dotted_name":
+                                    module_text = code[subchild.start_byte : subchild.end_byte]
+                                    top_level = module_text.split(".")[0]
+                                    first_party.add(top_level)
+                                    break
+
+        return self._categorize_libraries(
+            imported_libs,
+            self.stdlibs["python"],
+            first_party=first_party
+        )
 
     def extract_r_libraries(self: Self, code: str) -> ImportedLibraries:
         """Extract imported libraries from R code."""
@@ -129,12 +191,15 @@ class Extractor:
         )
 
         imported_libs = set()
+        first_party = set()
+        source_arg_positions = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
         func_nodes = captures.get("func_name", [])
         package_nodes = captures.get("package", [])
 
+        # Handle library(), require(), and source() calls
         for func_node in func_nodes:
             func_name = code[func_node.start_byte : func_node.end_byte]
             if func_name in ("library", "require"):
@@ -144,13 +209,37 @@ class Extractor:
                         pkg_text = pkg_text.strip("\"'")
                         imported_libs.add(pkg_text)
                         break
+            elif func_name == "source":
+                # Handle source() calls - these are first-party
+                for pkg_node in package_nodes:
+                    if pkg_node.start_byte > func_node.start_byte:
+                        # Mark this node's position so we skip it later
+                        source_arg_positions.add((pkg_node.start_byte, pkg_node.end_byte))
+                        file_path = code[pkg_node.start_byte : pkg_node.end_byte]
+                        file_path = file_path.strip("\"'")
+                        # Extract the base name without extension
+                        base_name = Path(file_path).stem
+                        if base_name:
+                            first_party.add(base_name)
+                        break
 
+        # Handle :: and ::: operators
         for node in package_nodes:
+            # Skip if this node was part of a source() call
+            if (node.start_byte, node.end_byte) in source_arg_positions:
+                continue
+                
             pkg_text = code[node.start_byte : node.end_byte]
             pkg_text = pkg_text.strip("\"'")
-            imported_libs.add(pkg_text)
+            # Skip if this looks like a file path (contains / or ends with .R)
+            if "/" not in pkg_text and not pkg_text.endswith(".R"):
+                imported_libs.add(pkg_text)
 
-        return self._categorize_libraries(imported_libs, self.stdlibs["r"])
+        return self._categorize_libraries(
+            imported_libs,
+            self.stdlibs["r"],
+            first_party=first_party
+        )
 
     def extract_go_libraries(self: Self, code: str) -> ImportedLibraries:
         """Extract imported libraries from Go code."""
@@ -172,14 +261,17 @@ class Extractor:
         for node in captures.get("import", []):
             import_path = code[node.start_byte : node.end_byte]
             import_path = import_path.strip('"')
-            # Keep all imports (both stdlib and third-party)
             imported_libs.add(import_path)
 
         # Go stdlib check: no dots or slashes means stdlib
         def is_go_stdlib(import_path: str) -> bool:
             return "." not in import_path and "/" not in import_path
 
-        return self._categorize_libraries(imported_libs, set(), stdlib_check_func=is_go_stdlib)
+        return self._categorize_libraries(
+            imported_libs,
+            set(),
+            stdlib_check_func=is_go_stdlib
+        )
 
     def extract_rust_libraries(self: Self, code: str) -> ImportedLibraries:
         """Extract imported libraries from Rust code."""
@@ -189,40 +281,56 @@ class Extractor:
         query = Query(
             self.languages["rust"],
             """
-            (use_declaration
-              argument: (scoped_identifier
-                path: (identifier) @crate))
-            
-            (use_declaration
-              argument: (scoped_identifier
-                path: (scoped_identifier
-                  path: (identifier) @crate)))
-            
-            (use_declaration
-              argument: (identifier) @crate)
-            
-            (use_declaration
-              argument: (scoped_use_list
-                path: (identifier) @crate))
-            
-            (use_declaration
-              argument: (scoped_use_list
-                path: (scoped_identifier
-                  path: (identifier) @crate)))
+            (use_declaration) @use_decl
             """,
         )
 
         imported_libs = set()
+        first_party = set()
+        first_party_keywords = {"crate", "self", "super"}
+        
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
-        for node in captures.get("crate", []):
-            crate_name = code[node.start_byte : node.end_byte]
-            # Don't filter here - we'll categorize everything
-            if crate_name not in ("crate", "self", "super"):
-                imported_libs.add(crate_name)
+        for node in captures.get("use_decl", []):
+            # Get the full use declaration text
+            use_text = code[node.start_byte : node.end_byte]
+            
+            # Extract the path after "use"
+            # Remove "use " prefix and any trailing semicolon/whitespace
+            path = use_text.replace("use ", "").strip().rstrip(";").strip()
+            
+            # Check if it starts with a first-party keyword
+            is_first_party = False
+            for keyword in first_party_keywords:
+                if path.startswith(keyword + "::"):
+                    is_first_party = True
+                    # Extract the module name after the keyword
+                    # e.g., "crate::utils::helpers" -> "utils"
+                    parts = path.split("::")
+                    if len(parts) > 1:
+                        first_party.add(parts[1])
+                    break
+                elif path == keyword:
+                    # Just "use crate;" or "use self;"
+                    is_first_party = True
+                    break
+            
+            # If not first-party, extract the crate name
+            if not is_first_party:
+                # Get the first part before ::
+                crate_name = path.split("::")[0]
+                # Handle cases like "serde::{Serialize, Deserialize}"
+                if "{" in crate_name:
+                    crate_name = crate_name.split("{")[0].strip()
+                if crate_name and crate_name not in first_party_keywords:
+                    imported_libs.add(crate_name)
 
-        return self._categorize_libraries(imported_libs, self.stdlibs["rust"])
+        return self._categorize_libraries(
+            imported_libs,
+            self.stdlibs["rust"],
+            first_party=first_party
+        )
 
     def extract_javascript_libraries(self: Self, code: str) -> ImportedLibraries:
         """Extract imported libraries from JavaScript code."""
@@ -242,6 +350,7 @@ class Extractor:
         )
 
         imported_libs = set()
+        first_party = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
@@ -249,9 +358,17 @@ class Extractor:
         for node in captures.get("import", []):
             import_path = code[node.start_byte : node.end_byte]
             import_path = import_path.strip("\"'")
-            # Skip relative imports
-            if not import_path.startswith(".") and not import_path.startswith("/"):
-                # Extract package name (before any /)
+            
+            # Check if it's a relative import (first-party)
+            if import_path.startswith(".") or import_path.startswith("/"):
+                # Extract the module name from relative path
+                # e.g., "./utils/helpers" -> "helpers"
+                path = Path(import_path)
+                base_name = path.stem
+                if base_name and base_name not in ("index", ""):
+                    first_party.add(base_name)
+            else:
+                # External package
                 package = import_path.split("/")[0]
                 # Handle scoped packages like @babel/core
                 if package.startswith("@") and "/" in import_path:
@@ -267,7 +384,13 @@ class Extractor:
             if func_name == "require" and i < len(import_nodes):
                 import_path = code[import_nodes[i].start_byte : import_nodes[i].end_byte]
                 import_path = import_path.strip("\"'")
-                if not import_path.startswith(".") and not import_path.startswith("/"):
+                
+                if import_path.startswith(".") or import_path.startswith("/"):
+                    path = Path(import_path)
+                    base_name = path.stem
+                    if base_name and base_name not in ("index", ""):
+                        first_party.add(base_name)
+                else:
                     package = import_path.split("/")[0]
                     if package.startswith("@") and "/" in import_path:
                         package = "/".join(import_path.split("/")[:2])
@@ -280,7 +403,10 @@ class Extractor:
             return package in self.stdlibs["javascript"]
 
         return self._categorize_libraries(
-            imported_libs, set(), stdlib_check_func=is_nodejs_stdlib
+            imported_libs,
+            set(),
+            first_party=first_party,
+            stdlib_check_func=is_nodejs_stdlib
         )
 
     def extract_typescript_libraries(self: Self, code: str) -> ImportedLibraries:
@@ -301,13 +427,21 @@ class Extractor:
         )
 
         imported_libs = set()
+        first_party = set()
         query_cursor = QueryCursor(query)
         captures = query_cursor.captures(tree.root_node)
 
         for node in captures.get("import", []):
             import_path = code[node.start_byte : node.end_byte]
             import_path = import_path.strip("\"'")
-            if not import_path.startswith(".") and not import_path.startswith("/"):
+            
+            # Check if it's a relative import (first-party)
+            if import_path.startswith(".") or import_path.startswith("/"):
+                path = Path(import_path)
+                base_name = path.stem
+                if base_name and base_name not in ("index", ""):
+                    first_party.add(base_name)
+            else:
                 package = import_path.split("/")[0]
                 if package.startswith("@") and "/" in import_path:
                     package = "/".join(import_path.split("/")[:2])
@@ -319,7 +453,10 @@ class Extractor:
             return package in self.stdlibs["javascript"]
 
         return self._categorize_libraries(
-            imported_libs, set(), stdlib_check_func=is_nodejs_stdlib
+            imported_libs,
+            set(),
+            first_party=first_party,
+            stdlib_check_func=is_nodejs_stdlib
         )
 
     def extract_from_file(self: Self, file_path: str | Path) -> ImportedLibraries:
