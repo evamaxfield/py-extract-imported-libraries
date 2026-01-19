@@ -28,7 +28,7 @@ jobs:
         python -m pip install --upgrade pip uv
         uv venv
         source .venv/bin/activate
-        uv pip install .[lint]
+        just install
     - name: Lint
       run: |
         source .venv/bin/activate
