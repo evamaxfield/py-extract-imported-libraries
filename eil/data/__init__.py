@@ -13,7 +13,7 @@ STDLIBS_FILE = DATA_DIR / "stdlibs.yml"
 
 def load_stdlibs() -> dict[str, set[str]]:
     """Load standard library data from YAML file."""
-    with open(STDLIBS_FILE) as f:
+    with open(STDLIBS_FILE, encoding="utf-8") as f:
         stdlib_data: dict[str, list[str]] = safe_load(f)
 
     # Convert to set

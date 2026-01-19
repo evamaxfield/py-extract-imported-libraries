@@ -9,9 +9,25 @@ repos:
       - id: ruff-format
         types_or: [ python, pyi ]
 
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
+  # Revert to mypy if desired
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.17.1
+  #   hooks:
+  #     - id: mypy
+
+  - repo: local
     hooks:
-      - id: mypy
-        additional_dependencies: 
-          - "types-PyYAML"
+      - id: ty-check
+        name: ty check
+        entry: ty check
+        language: system
+        types: [python]
+
+  # Notebooks
+  - repo: https://github.com/nbQA-dev/nbQA
+    rev: 1.9.1
+    hooks:
+      - id: nbqa-ruff-format
+      - id: nbqa-ruff-check
+      - id: nbqa-ruff
+        args: ["--fix"]

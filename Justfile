@@ -27,11 +27,11 @@ install:
 
 # lint, format, and check all files
 lint:
-	pre-commit run --all-files
+	prek run --all-files
 
-# run tests
+# run all tests
 test:
-	pytest .
+	pytest
 
 ###############################################################################
 # Release and versioning

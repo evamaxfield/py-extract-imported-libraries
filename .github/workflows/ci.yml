@@ -17,20 +17,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-
+    - uses: actions/checkout@v6
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.14"
-  
-    - uses: extractions/setup-just@v1
-
+    - uses: extractions/setup-just@v3
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip wheel
-        pip install pre-commit
-      
+        pip install prek
     - name: Lint
       run: just lint
 
@@ -39,20 +35,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-
+    - uses: actions/checkout@v6
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: "3.14"
-  
-    - uses: extractions/setup-just@v1
-
+    - uses: extractions/setup-just@v3
     - name: Install Dependencies
       run: |
         pip install uv
         uv pip install --system .[test]
-      
     - name: Run Tests
       run: just test
 
@@ -66,18 +58,15 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-
       - name: Build
         run: |
           python -m pip install build
           python -m build
-
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

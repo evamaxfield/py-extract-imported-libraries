@@ -1,16 +1,27 @@
 #!/usr/bin/env python
 
+import traceback
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Self
 
+from tqdm import tqdm
 from tree_sitter import Language, Parser, Query, QueryCursor
-from tree_sitter_language_pack import get_language
+from tree_sitter_language_pack import SupportedLanguage, get_language
 
 from .data import load_stdlibs
 
 ###############################################################################
+
+
+class ExtractorType(Enum):
+    """Enum for selecting which file types to extract from."""
+
+    PYTHON = "python"
+    R = "r"
+    ALL = "all"
 
 
 @dataclass
@@ -20,6 +31,36 @@ class ImportedLibraries:
     stdlib: set[str]
     third_party: set[str]
     first_party: set[str]
+
+
+@dataclass
+class DirectoryExtractionResult:
+    """Result of extracting imports from a directory."""
+
+    extracted: dict[Path, ImportedLibraries] = field(default_factory=dict)
+    failed: dict[Path, str] = field(default_factory=dict)
+
+
+###############################################################################
+
+
+def _collect_files_to_extract(
+    directory: Path,
+    extractor_type: ExtractorType,
+    recursive: bool = False,
+) -> list[tuple[Path, str]]:
+    """Collect all source files in a directory based on extractor type."""
+    files: list[tuple[Path, str]] = []
+    glob_pattern = "**/*" if recursive else "*"
+
+    if extractor_type in (ExtractorType.PYTHON, ExtractorType.ALL):
+        files.extend((f, "python") for f in directory.glob(f"{glob_pattern}.py"))
+
+    if extractor_type in (ExtractorType.R, ExtractorType.ALL):
+        files.extend((f, "r") for f in directory.glob(f"{glob_pattern}.r"))
+        files.extend((f, "r") for f in directory.glob(f"{glob_pattern}.R"))
+
+    return files
 
 
 ###############################################################################
@@ -35,43 +76,80 @@ class Extractor:
         # "typescript",
     )
 
+    _PYTHON_QUERY = """
+        (import_statement
+          name: (dotted_name) @import)
+
+        (import_statement
+          name: (aliased_import
+            name: (dotted_name) @import))
+
+        (import_from_statement
+          module_name: (dotted_name) @import)
+
+        (import_from_statement
+          module_name: (relative_import) @relative_import)
+        """
+
+    _R_QUERY = """
+        (call
+          function: (identifier) @func_name
+          arguments: (arguments
+            (argument [(identifier) (string)] @package)))
+
+        (namespace_operator
+          lhs: (identifier) @package)
+
+        (namespace_operator
+          lhs: (string) @package)
+        """
+
     def __init__(self) -> None:
-        self.languages: dict[str, Language] = {}
-        self.parsers: dict[str, Parser] = {}
+        self.languages: dict[SupportedLanguage, Language] = {}
+        self.parsers: dict[SupportedLanguage, Parser] = {}
+        self.queries: dict[SupportedLanguage, Query] = {}
         self.stdlibs = load_stdlibs()
 
-    def _load_language(self: Self, lang: str) -> None:
-        """Load a language parser if not already loaded."""
+    def _load_language(self: Self, lang: SupportedLanguage) -> None:
+        """Load a language parser and query if not already loaded."""
         if lang not in self.parsers:
-            try:
-                self.languages[lang] = get_language(lang)
-                self.parsers[lang] = Parser(self.languages[lang])
-            except Exception as e:
-                print(f"Warning: Could not load {lang}: {e}")
+            self.languages[lang] = get_language(lang)
+            self.parsers[lang] = Parser(self.languages[lang])
+
+            # Cache the query for this language
+            query_map: dict[SupportedLanguage, str] = {
+                "python": self._PYTHON_QUERY,
+                "r": self._R_QUERY,
+            }
+            if lang in query_map:
+                self.queries[lang] = Query(self.languages[lang], query_map[lang])
 
     def _categorize_libraries(
         self: Self,
         deps: set[str],
         stdlib_set: set[str],
         first_party: set[str] | None = None,
-        stdlib_check_func: Callable | None = None,
+        stdlib_check_func: Callable[[str], bool] | None = None,
     ) -> ImportedLibraries:
         """Categorize imports into stdlib, third-party, and first-party."""
-        stdlib = set()
-        third_party = set()
+        stdlib: set[str] = set()
+        third_party: set[str] = set()
         first_party_set = first_party or set()
 
         for dep in deps:
+            # Skip if already identified as first-party
+            if dep in first_party_set:
+                continue
+
             if stdlib_check_func:
                 if stdlib_check_func(dep):
                     stdlib.add(dep)
                 else:
                     third_party.add(dep)
+            elif dep in stdlib_set:
+                stdlib.add(dep)
             else:
-                if dep in stdlib_set:
-                    stdlib.add(dep)
-                else:
-                    third_party.add(dep)
+                third_party.add(dep)
 
         return ImportedLibraries(
             stdlib=stdlib, third_party=third_party, first_party=first_party_set
@@ -82,27 +160,9 @@ class Extractor:
         self._load_language("python")
         tree = self.parsers["python"].parse(bytes(code, "utf8"))
 
-        query = Query(
-            self.languages["python"],
-            """
-            (import_statement
-              name: (dotted_name) @import)
-            
-            (import_statement
-              name: (aliased_import 
-                name: (dotted_name) @import))
-            
-            (import_from_statement
-              module_name: (dotted_name) @import)
-            
-            (import_from_statement
-              module_name: (relative_import) @relative_import)
-            """,
-        )
-
-        imported_libs = set()
-        first_party = set()
-        query_cursor = QueryCursor(query)
+        imported_libs: set[str] = set()
+        first_party: set[str] = set()
+        query_cursor = QueryCursor(self.queries["python"])
         captures = query_cursor.captures(tree.root_node)
 
         # Handle absolute imports
@@ -160,26 +220,10 @@ class Extractor:
         self._load_language("r")
         tree = self.parsers["r"].parse(bytes(code, "utf8"))
 
-        query = Query(
-            self.languages["r"],
-            """
-            (call
-              function: (identifier) @func_name
-              arguments: (arguments 
-                (argument [(identifier) (string)] @package)))
-            
-            (namespace_operator
-              lhs: (identifier) @package)
-            
-            (namespace_operator
-              lhs: (string) @package)
-            """,
-        )
-
-        imported_libs = set()
-        first_party = set()
-        source_arg_positions = set()
-        query_cursor = QueryCursor(query)
+        imported_libs: set[str] = set()
+        first_party: set[str] = set()
+        source_arg_positions: set[tuple[int, int]] = set()
+        query_cursor = QueryCursor(self.queries["r"])
         captures = query_cursor.captures(tree.root_node)
 
         func_nodes = captures.get("func_name", [])
@@ -265,3 +309,66 @@ class Extractor:
         raise ValueError(
             f"Unsupported file extension: {path.suffix}. Supported: {supported_exts}"
         )
+
+    def extract_from_directory(
+        self: Self,
+        directory: str | Path,
+        extractor_type: ExtractorType = ExtractorType.ALL,
+        recursive: bool = False,
+        show_progress: bool = True,
+        progress_leave: bool = True,
+    ) -> DirectoryExtractionResult:
+        """
+        Extract imported libraries from all source files in a directory.
+
+        Parameters
+        ----------
+        directory : str | Path
+            Path to the directory containing source files.
+        extractor_type : ExtractorType
+            Which file types to extract from: PYTHON (only .py files),
+            R (only .r/.R files), or ALL (default, extracts from all supported types).
+        recursive : bool
+            Whether to search recursively in subdirectories (default False).
+        show_progress : bool
+            Whether to display a progress bar (default True).
+        progress_leave : bool
+            Whether to leave the progress bar visible after completion (default True).
+            Set to False to remove the progress bar when done.
+
+        Returns
+        -------
+        DirectoryExtractionResult
+            Dataclass containing successfully extracted files and failed extractions
+            with their tracebacks.
+
+        Raises
+        ------
+        NotADirectoryError
+            If the provided path is not a directory.
+        """
+        directory = Path(directory).resolve()
+        if not directory.is_dir():
+            raise NotADirectoryError(f"{directory} is not a directory")
+
+        files_to_extract = _collect_files_to_extract(directory, extractor_type, recursive)
+        result = DirectoryExtractionResult()
+
+        if not files_to_extract:
+            return result
+
+        progress_bar = tqdm(
+            files_to_extract,
+            desc="Extracting imports",
+            leave=progress_leave,
+            disable=not show_progress,
+        )
+
+        for file_path, _file_type in progress_bar:
+            progress_bar.set_description(f"Extracting {file_path.name}")
+            try:
+                result.extracted[file_path] = self.extract_from_file(file_path)
+            except Exception:
+                result.failed[file_path] = traceback.format_exc()
+
+        return result

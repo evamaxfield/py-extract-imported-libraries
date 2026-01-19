@@ -127,4 +127,8 @@ index.md
 index_files/
 index.tex
 
+# Claude
+claude.md
+.claude/
+
 # Project specific

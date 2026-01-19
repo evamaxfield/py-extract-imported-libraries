@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from eil import Extractor, ImportedLibraries
+from eil import Extractor, ExtractorType, ImportedLibraries
 
 ###############################################################################
 
@@ -82,15 +82,57 @@ def test_library_extraction_from_file() -> None:
     assert extracted_libs.stdlib == {
         "collections",
         "dataclasses",
+        "enum",
         "pathlib",
+        "traceback",
         "typing",
     }
 
     # Check third_party
     assert extracted_libs.third_party == {
+        "tqdm",
         "tree_sitter",
         "tree_sitter_language_pack",
     }
 
     # Check first_party (data module)
     assert extracted_libs.first_party == {"data"}
+
+
+def test_directory_extraction() -> None:
+    """Test extraction from a directory."""
+    # Extract from the eil package directory (which contains main.py)
+    eil_dir = Path(__file__).parent.parent
+    result = INITIALIZED_EXTRACTOR.extract_from_directory(
+        eil_dir,
+        extractor_type=ExtractorType.PYTHON,
+        recursive=False,
+        show_progress=False,
+    )
+
+    # Should have extracted main.py and __init__.py (at least)
+    assert len(result.extracted) >= 2
+    assert len(result.failed) == 0
+
+    # Find main.py in results and verify its extraction
+    main_py = eil_dir / "main.py"
+    assert main_py in result.extracted
+    assert "tqdm" in result.extracted[main_py].third_party
+
+
+def test_directory_extraction_recursive() -> None:
+    """Test recursive extraction from a directory."""
+    # Extract recursively from eil package directory
+    eil_dir = Path(__file__).parent.parent
+    result = INITIALIZED_EXTRACTOR.extract_from_directory(
+        eil_dir,
+        extractor_type=ExtractorType.PYTHON,
+        recursive=True,
+        show_progress=False,
+    )
+
+    # Should include files from subdirectories (tests/ and data/)
+    assert (
+        len(result.extracted) >= 4
+    )  # main.py, __init__.py, data/__init__.py, tests/test_basics.py
+    assert len(result.failed) == 0
