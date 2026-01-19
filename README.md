@@ -58,3 +58,30 @@ for file_path, libs in result.extracted.items():
 for file_path, error in result.failed.items():
     print(f"Failed: {file_path}\n{error}")
 ```
+
+## Processing Notebook Formats
+
+If you want to extract imports from Jupyter notebooks or Rmd files, you should first convert them to their script counterparts using: [py-nb-to-src](https://github.com/evamaxfield/py-nb-to-src) which will convert `.ipynb` of all types (R, Julia, Python, Matlab) to their respective script formats as well as `.Rmd` to `.R` scripts.
+
+Install with: `pip install py-nb-to-src`
+
+Then use the following code to convert and extract imports:
+
+```python
+from py_nb_to_src import convert_directory, ConverterType
+from pyeil import Extractor
+
+converted_file_results = convert_directory(
+    "notebooks/",
+    recursive=True,
+    progress_leave=False,
+)
+extractor = Extractor()
+extracted_results = extractor.extract_from_directory(
+    "notebooks/",
+    recursive=True,
+    progress_leave=False,
+)
+for file_path, libs in extracted_results.extracted.items():
+    print(f"{file_path}: {libs.third_party}")
+```
