@@ -17,26 +17,44 @@ pip install pyeil
 
 # Usage
 
+## Single File
+
 ```python
 from eil import Extractor
 
 extractor = Extractor()
 imported_libs = extractor.extract_from_file("path/to/your/file.py")
 print(imported_libs)
-```
-
-For example, here are the imported libraries extracted from the `main.py` file itself:
-
-```python
-from eil import Extractor
-
-extractor = Extractor()
-imported_libs = extractor.extract_from_file("main.py")
-print(imported_libs)
 # Output:
 # ImportedLibraries(
-#   stdlib={'collections', 'pathlib', 'dataclasses', 'typing'},
-#   third_party={'tree_sitter_language_pack', 'tree_sitter'},
-#   first_party={'data'},
+#   stdlib={'os', 'sys'},
+#   third_party={'requests', 'pandas'},
+#   first_party={'utils'},
 # )
+```
+
+## Directory Processing
+
+Extract imports from all files in a directory with optional progress bar:
+
+```python
+from eil import Extractor, ExtractorType
+
+extractor = Extractor()
+
+# Extract from all supported files in a directory
+result = extractor.extract_from_directory(
+    "src/",
+    extractor_type=ExtractorType.ALL,  # or PYTHON, R
+    recursive=True,                     # search subdirectories
+    show_progress=True,                 # show tqdm progress bar
+)
+
+# Access results
+for file_path, libs in result.extracted.items():
+    print(f"{file_path}: {libs.third_party}")
+
+# Check for failures
+for file_path, error in result.failed.items():
+    print(f"Failed: {file_path}\n{error}")
 ```
