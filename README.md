@@ -73,13 +73,13 @@ from eil import Extractor
 
 converted_file_results = convert_directory(
     "notebooks/",
-    recursive=True,
+    # recursive=True,
     progress_leave=False,
 )
 extractor = Extractor()
 extracted_results = extractor.extract_from_directory(
     "notebooks/",
-    recursive=True,
+    # recursive=True,
     progress_leave=False,
 )
 for file_path, libs in extracted_results.extracted.items():
