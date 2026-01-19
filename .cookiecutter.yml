@@ -1,0 +1,8 @@
+default_context:
+    author_name: "Eva Maxfield Brown"
+    author_email: "evamaxfieldbrown@gmail.com"
+    hosting_github_username_or_org: "evamaxfield"
+    project_name: "py-extract-imported-libraries"
+    project_slug: "eil"
+    python_slug: "eil"
+    project_short_description: "Small Python utility to extract imported libraries from source code files in various programming languages using [tree-sitter](https://tree-sitter.github.io/tree-sitter/)."
