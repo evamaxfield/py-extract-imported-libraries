@@ -69,7 +69,7 @@ Then use the following code to convert and extract imports:
 
 ```python
 from py_nb_to_src import convert_directory, ConverterType
-from pyeil import Extractor
+from eil import Extractor
 
 converted_file_results = convert_directory(
     "notebooks/",
