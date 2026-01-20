@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 # https://peps.python.org/pep-0621/
 [project]
 name = "pyeil"
-description = "Extract imported libraries from Python, R, and other source code files using tree-sitter."
+description = "Small Python utility to extract imported libraries from source code files in various programming languages using tree-sitter."
 keywords = []
 readme = "README.md"
 requires-python = ">=3.12"
@@ -34,12 +34,6 @@ dependencies = [
   "tree-sitter-language-pack>=0.13",
 ]
 
-[project.urls]
-Homepage = "https://github.com/evamaxfield/py-extract-imported-libraries"
-"Bug Tracker" = "https://github.com/evamaxfield/py-extract-imported-libraries/issues"
-Documentation = "https://evamaxfield.github.io/py-extract-imported-libraries"
-"User Support" = "https://github.com/evamaxfield/py-extract-imported-libraries/issues"
-
 # extra dependencies
 # https://peps.python.org/pep-0621/#dependencies-optional-dependencies
 [project.optional-dependencies]
@@ -55,7 +49,15 @@ test = [
   "pytest>=9",
 ]
 
+[project.urls]
+Homepage = "https://github.com/evamaxfield/py-extract-imported-libraries"
+"Bug Tracker" = "https://github.com/evamaxfield/py-extract-imported-libraries/issues"
+Documentation = "https://evamaxfield.github.io/py-extract-imported-libraries"
+"User Support" = "https://github.com/evamaxfield/py-extract-imported-libraries/issues"
+
 # entry points
+# example
+# rs-graph-prelinked-dataset-ingestion = "rs_graph.bin.prelinked_dataset_ingestion:main"
 # https://peps.python.org/pep-0621/#entry-points
 # [project.entry-points."console_scripts"]
 
@@ -105,7 +107,6 @@ lint.extend-ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "**/notebooks/*" = ["E501", "B018"]
-"**/publications/*" = ["E501", "B018"]
 "**/tests/*.py" = ["D"]
 "**/migrations/*.py" = ["D"]
 

@@ -67,7 +67,7 @@ instance/
 
 # Sphinx documentation
 docs/_build/
-docs/rs_graph.*rst
+docs/eil.*rst
 docs/modules.rst
 
 # PyBuilder
@@ -128,7 +128,9 @@ index_files/
 index.tex
 
 # Claude
-claude.md
 .claude/
+CLAUDE.md
 
 # Project specific
+
+# Ignored data files
