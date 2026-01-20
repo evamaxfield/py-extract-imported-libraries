@@ -68,7 +68,7 @@ Install with: `pip install py-nb-to-src`
 Then use the following code to convert and extract imports:
 
 ```python
-from py_nb_to_src import convert_directory, ConverterType
+from nb_to_src import convert_directory, ConverterType
 from eil import Extractor
 
 converted_file_results = convert_directory(
