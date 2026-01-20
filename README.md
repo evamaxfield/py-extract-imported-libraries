@@ -15,32 +15,6 @@ You can install the package via pip:
 pip install pyeil
 ```
 
-# Usage
-
-## Ignored external directories & third-party detection 🔧
-
-By default, directories commonly used for vendored or copied code (e.g., `external`, `vendor`, `third_party`, `deps`) are ignored when extracting imports from a repository. This prevents analyzing large bundled dependencies and avoids falsely classifying those packages as first-party.
-
-When an ignored directory contains sub-packages or files (for example `external/utils/__init__.py` or `external/localpkg.R`), the immediate module names (`utils`, `localpkg`) are recorded as *third-party modules* and returned on the `DirectoryExtractionResult` as `ignored_external_modules`. Imports that match those names are classified as third-party by default.
-
-You can override which directories are ignored via the `ignore_directories_list` parameter on `Extractor.extract_from_directory()` (pass an empty set to disable the default ignore list).
-
-Example:
-
-```python
-from eil import Extractor, ExtractorType
-
-extractor = Extractor()
-result = extractor.extract_from_directory(
-    "src/",
-    extractor_type=ExtractorType.ALL,
-    recursive=True,
-    ignore_directories_list=set(),  # disable default ignore list
-)
-
-# Names discovered inside ignored directories (treated as third-party):
-print(result.ignored_external_modules)
-```
 
 # Usage
 
@@ -84,6 +58,31 @@ for file_path, libs in result.extracted.items():
 # Check for failures
 for file_path, error in result.failed.items():
     print(f"Failed: {file_path}\n{error}")
+```
+
+## Ignored External/Vendored Directories
+
+By default, directories commonly used for vendored or copied code (e.g., `external`, `vendor`, `third_party`, `deps`) are ignored when extracting imports from a repository. This prevents analyzing large bundled dependencies and avoids falsely classifying those packages as first-party.
+
+When an ignored directory contains sub-packages or files (for example `external/utils/__init__.py` or `external/localpkg.R`), the immediate module names (`utils`, `localpkg`) are recorded as *third-party modules* and returned on the `DirectoryExtractionResult` as `ignored_external_modules`. Imports that match those names are classified as third-party by default.
+
+You can override which directories are ignored via the `ignore_directories_list` parameter on `Extractor.extract_from_directory()` (pass an empty set to disable the default ignore list).
+
+Example:
+
+```python
+from eil import Extractor, ExtractorType
+
+extractor = Extractor()
+result = extractor.extract_from_directory(
+    "src/",
+    extractor_type=ExtractorType.ALL,
+    recursive=True,
+    ignore_directories_list=set(),  # disable default ignore list
+)
+
+# Names discovered inside ignored directories (treated as third-party):
+print(result.ignored_external_modules)
 ```
 
 ## Processing Notebook Formats
