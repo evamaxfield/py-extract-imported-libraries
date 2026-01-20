@@ -63,6 +63,32 @@ def _collect_files_to_extract(
     return files
 
 
+def _collect_repository_modules(
+    directory: Path,
+    recursive: bool = False,
+) -> set[str]:
+    """
+    Collect module names from source files in a directory.
+
+    Returns the stem (filename without extension) of all Python and R files.
+    This is used to identify first-party modules based on file names.
+    """
+    modules: set[str] = set()
+    glob_pattern = "**/*" if recursive else "*"
+
+    # Collect Python modules
+    for file_path in directory.glob(f"{glob_pattern}.py"):
+        modules.add(file_path.stem)
+
+    # Collect R modules
+    for file_path in directory.glob(f"{glob_pattern}.r"):
+        modules.add(file_path.stem)
+    for file_path in directory.glob(f"{glob_pattern}.R"):
+        modules.add(file_path.stem)
+
+    return modules
+
+
 ###############################################################################
 
 
@@ -130,15 +156,22 @@ class Extractor:
         stdlib_set: set[str],
         first_party: set[str] | None = None,
         stdlib_check_func: Callable[[str], bool] | None = None,
+        repo_files: set[str] | None = None,
     ) -> ImportedLibraries:
         """Categorize imports into stdlib, third-party, and first-party."""
         stdlib: set[str] = set()
         third_party: set[str] = set()
         first_party_set = first_party or set()
+        repo_files_set = repo_files or set()
 
         for dep in deps:
             # Skip if already identified as first-party
             if dep in first_party_set:
+                continue
+
+            # Check if there's a file in the repository with this name
+            if dep in repo_files_set:
+                first_party_set.add(dep)
                 continue
 
             if stdlib_check_func:
@@ -155,90 +188,91 @@ class Extractor:
             stdlib=stdlib, third_party=third_party, first_party=first_party_set
         )
 
-    def extract_python_libraries(self: Self, code: str) -> ImportedLibraries:  # noqa: C901
+    def _python_absolute_imports(self, captures: dict, code: str) -> set[str]:
+        """Return top-level names from absolute import captures."""
+        libs: set[str] = set()
+        for node in captures.get("import", []):
+            parent = node.parent
+            if parent and parent.type == "relative_import":
+                continue
+            dep_name = code[node.start_byte : node.end_byte]
+            libs.add(dep_name.split(".")[0])
+        return libs
+
+    def _python_extract_from_import_statement(self, import_statement, code: str) -> str | None:
+        """Check an import_from_statement and return the top-level module if present."""
+        for child in import_statement.children:
+            if child.type == "dotted_name":
+                return code[child.start_byte : child.end_byte].split(".")[0]
+            if child.type == "aliased_import":
+                for subchild in child.children:
+                    if subchild.type == "dotted_name":
+                        return code[subchild.start_byte : subchild.end_byte].split(".")[0]
+        return None
+
+    def _python_relative_dotted_name(self, node, code: str) -> str | None:
+        """Return top-level name from a dotted_name child in a relative import node."""
+        for child in node.children:
+            if child.type == "dotted_name":
+                return code[child.start_byte : child.end_byte].split(".")[0]
+        return None
+
+    def _python_relative_imports(self, captures: dict, code: str) -> set[str]:
+        """Return module names from relative import captures (first-party)."""
+        first_party: set[str] = set()
+        for node in captures.get("relative_import", []):
+            import_statement = node.parent
+            if not import_statement or import_statement.type != "import_from_statement":
+                continue
+
+            dotted = self._python_relative_dotted_name(node, code)
+            if dotted:
+                first_party.add(dotted)
+                continue
+
+            # Fallback: use helper to get the imported module from the import statement
+            module = self._python_extract_from_import_statement(import_statement, code)
+            if module:
+                first_party.add(module)
+        return first_party
+
+    def extract_python_libraries(
+        self: Self,
+        code: str,
+        repo_files: set[str] | None = None,
+    ) -> ImportedLibraries:
         """Extract imported libraries from Python code."""
         self._load_language("python")
         tree = self.parsers["python"].parse(bytes(code, "utf8"))
 
-        imported_libs: set[str] = set()
-        first_party: set[str] = set()
         query_cursor = QueryCursor(self.queries["python"])
         captures = query_cursor.captures(tree.root_node)
 
-        # Handle absolute imports
-        for node in captures.get("import", []):
-            # Check if this is part of a relative import by examining the parent
-            parent = node.parent
-            if parent and parent.type == "relative_import":
-                # Skip - will be handled in relative imports section
-                continue
-
-            dep_name = code[node.start_byte : node.end_byte]
-            top_level = dep_name.split(".")[0]
-            imported_libs.add(top_level)
-
-        # Handle relative imports (first-party)
-        for node in captures.get("relative_import", []):
-            # Get the full import statement to extract the module
-            import_statement = node.parent
-            if import_statement and import_statement.type == "import_from_statement":
-                # First check if there's a dotted_name in the relative_import
-                has_dotted = False
-                for child in node.children:
-                    if child.type == "dotted_name":
-                        module_text = code[child.start_byte : child.end_byte]
-                        top_level = module_text.split(".")[0]
-                        first_party.add(top_level)
-                        has_dotted = True
-                        break
-
-                # If no dotted_name in relative_import, check what's imported
-                if not has_dotted:
-                    # Look for the name being imported after "import"
-                    for child in import_statement.children:
-                        if child.type == "dotted_name":
-                            # This is after the "import" keyword
-                            module_text = code[child.start_byte : child.end_byte]
-                            top_level = module_text.split(".")[0]
-                            first_party.add(top_level)
-                            break
-                        elif child.type == "aliased_import":
-                            # Handle "from . import utils as u"
-                            for subchild in child.children:
-                                if subchild.type == "dotted_name":
-                                    module_text = code[subchild.start_byte : subchild.end_byte]
-                                    top_level = module_text.split(".")[0]
-                                    first_party.add(top_level)
-                                    break
+        imported_libs = self._python_absolute_imports(captures, code)
+        first_party = self._python_relative_imports(captures, code)
 
         return self._categorize_libraries(
-            imported_libs, self.stdlibs["python"], first_party=first_party
+            imported_libs,
+            self.stdlibs["python"],
+            first_party=first_party,
+            repo_files=repo_files,
         )
 
-    def extract_r_libraries(self: Self, code: str) -> ImportedLibraries:  # noqa: C901
-        """Extract imported libraries from R code."""
-        self._load_language("r")
-        tree = self.parsers["r"].parse(bytes(code, "utf8"))
-
+    def _r_process_calls(
+        self, captures: dict, code: str
+    ) -> tuple[set[str], set[str], set[tuple[int, int]]]:
+        """Process library/require/source calls and return imports and source positions."""
         imported_libs: set[str] = set()
         first_party: set[str] = set()
         source_arg_positions: set[tuple[int, int]] = set()
-        query_cursor = QueryCursor(self.queries["r"])
-        captures = query_cursor.captures(tree.root_node)
 
         func_nodes = captures.get("func_name", [])
         package_nodes = captures.get("package", [])
-
-        # Sort both lists by position to ensure consistent ordering
         func_nodes_sorted = sorted(func_nodes, key=lambda n: n.start_byte)
         package_nodes_sorted = sorted(package_nodes, key=lambda n: n.start_byte)
 
-        # Handle library(), require(), and source() calls
         for func_node in func_nodes_sorted:
             func_name = code[func_node.start_byte : func_node.end_byte]
-
-            # Find the closest package node that comes after this function node
-            # and is within the same call expression (before the next function)
             closest_pkg = None
             min_distance = float("inf")
 
@@ -246,7 +280,6 @@ class Extractor:
                 if pkg_node.start_byte > func_node.start_byte:
                     distance = pkg_node.start_byte - func_node.start_byte
                     if distance < min_distance:
-                        # Check if there's another function between them
                         has_func_between = any(
                             func_node.start_byte < f.start_byte < pkg_node.start_byte
                             for f in func_nodes_sorted
@@ -255,37 +288,70 @@ class Extractor:
                             closest_pkg = pkg_node
                             min_distance = distance
 
-            if closest_pkg:
-                pkg_text = code[closest_pkg.start_byte : closest_pkg.end_byte]
-                pkg_text = pkg_text.strip("\"'")
-
-                if func_name in ("library", "require"):
-                    imported_libs.add(pkg_text)
-                elif func_name == "source":
-                    # Mark this node's position so we skip it later
-                    source_arg_positions.add((closest_pkg.start_byte, closest_pkg.end_byte))
-                    # Extract the base name without extension
-                    base_name = Path(pkg_text).stem
-                    if base_name:
-                        first_party.add(base_name)
-
-        # Handle :: and ::: operators
-        for node in package_nodes_sorted:
-            # Skip if this node was part of a source() call
-            if (node.start_byte, node.end_byte) in source_arg_positions:
+            if not closest_pkg:
                 continue
 
-            pkg_text = code[node.start_byte : node.end_byte]
-            pkg_text = pkg_text.strip("\"'")
-            # Skip if this looks like a file path (contains / or ends with .R)
+            pkg_text = code[closest_pkg.start_byte : closest_pkg.end_byte].strip("\"'")
+
+            if func_name in ("library", "require"):
+                imported_libs.add(pkg_text)
+            elif func_name == "source":
+                source_arg_positions.add((closest_pkg.start_byte, closest_pkg.end_byte))
+                base_name = Path(pkg_text).stem
+                if base_name:
+                    first_party.add(base_name)
+
+        return imported_libs, first_party, source_arg_positions
+
+    def _r_process_namespace_ops(
+        self, captures: dict, code: str, source_arg_positions: set[tuple[int, int]]
+    ) -> set[str]:
+        """Process :: and ::: namespace operators to extract package names."""
+        imported_libs: set[str] = set()
+        package_nodes = captures.get("package", [])
+        package_nodes_sorted = sorted(package_nodes, key=lambda n: n.start_byte)
+
+        for node in package_nodes_sorted:
+            if (node.start_byte, node.end_byte) in source_arg_positions:
+                continue
+            pkg_text = code[node.start_byte : node.end_byte].strip("\"'")
             if "/" not in pkg_text and not pkg_text.endswith(".R"):
                 imported_libs.add(pkg_text)
+        return imported_libs
 
-        return self._categorize_libraries(
-            imported_libs, self.stdlibs["r"], first_party=first_party
+    def extract_r_libraries(
+        self: Self,
+        code: str,
+        repo_files: set[str] | None = None,
+    ) -> ImportedLibraries:
+        """Extract imported libraries from R code."""
+        self._load_language("r")
+        tree = self.parsers["r"].parse(bytes(code, "utf8"))
+
+        query_cursor = QueryCursor(self.queries["r"])
+        captures = query_cursor.captures(tree.root_node)
+
+        imported_from_calls, first_party, source_arg_positions = self._r_process_calls(
+            captures, code
+        )
+        imported_from_namespace = self._r_process_namespace_ops(
+            captures, code, source_arg_positions
         )
 
-    def extract_from_file(self: Self, file_path: str | Path) -> ImportedLibraries:
+        imported_libs = imported_from_calls.union(imported_from_namespace)
+
+        return self._categorize_libraries(
+            imported_libs,
+            self.stdlibs["r"],
+            first_party=first_party,
+            repo_files=repo_files,
+        )
+
+    def extract_from_file(
+        self: Self,
+        file_path: str | Path,
+        repo_files: set[str] | None = None,
+    ) -> ImportedLibraries:
         """Extract imported libraries from a file based on its extension."""
         path = Path(file_path)
         if not path.exists():
@@ -303,7 +369,7 @@ class Extractor:
 
         # Parse and return or handle unsupported extension
         if path.suffix in ext_map:
-            return ext_map[path.suffix](code)
+            return ext_map[path.suffix](code, repo_files=repo_files)
 
         supported_exts = ", ".join(sorted(set(ext_map.keys())))
         raise ValueError(
@@ -352,6 +418,7 @@ class Extractor:
             raise NotADirectoryError(f"{directory} is not a directory")
 
         files_to_extract = _collect_files_to_extract(directory, extractor_type, recursive)
+        repo_files = _collect_repository_modules(directory, recursive)
         result = DirectoryExtractionResult()
 
         if not files_to_extract:
@@ -367,7 +434,9 @@ class Extractor:
         for file_path, _file_type in progress_bar:
             progress_bar.set_description(f"Extracting {file_path.name}")
             try:
-                result.extracted[file_path] = self.extract_from_file(file_path)
+                result.extracted[file_path] = self.extract_from_file(
+                    file_path, repo_files=repo_files
+                )
             except Exception:
                 result.failed[file_path] = traceback.format_exc()
 
