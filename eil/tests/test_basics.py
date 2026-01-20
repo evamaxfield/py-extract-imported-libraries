@@ -175,3 +175,47 @@ def test_import_matches_repo_file_r(tmp_path: Path) -> None:
     assert "localpkg" in libs.first_party
     assert "ggplot2" in libs.third_party
     assert "localpkg" not in libs.third_party
+
+
+def test_import_matches_repo_dir_python(tmp_path: Path) -> None:
+    """If a repo package directory has the same name as an import, it should be first-party."""
+    extractor = Extractor()
+
+    pkg_dir = tmp_path / "localpkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "__init__.py").write_text("def helper():\n    return 1\n")
+
+    app = tmp_path / "app.py"
+    app.write_text("import localpkg\nimport requests\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.PYTHON, recursive=False, show_progress=False
+    )
+
+    assert app in result.extracted
+    libs = result.extracted[app]
+    assert "localpkg" in libs.first_party
+    assert "requests" in libs.third_party
+    assert "localpkg" not in libs.third_party
+
+
+def test_import_matches_repo_dir_r(tmp_path: Path) -> None:
+    """If a repo directory with R files matches a library import, it should be first-party."""
+    extractor = Extractor()
+
+    pkg_dir = tmp_path / "localpkg"
+    pkg_dir.mkdir()
+    (pkg_dir / "some.R").write_text("myfunc <- function() {}\n")
+
+    script = tmp_path / "script.R"
+    script.write_text("library(localpkg)\nlibrary(ggplot2)\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.R, recursive=False, show_progress=False
+    )
+
+    assert script in result.extracted
+    libs = result.extracted[script]
+    assert "localpkg" in libs.first_party
+    assert "ggplot2" in libs.third_party
+    assert "localpkg" not in libs.third_party

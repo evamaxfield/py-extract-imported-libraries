@@ -68,28 +68,34 @@ def _collect_repository_modules(
     recursive: bool = False,
 ) -> set[str]:
     """
-    Collect module names from source files in a directory.
+    Collect module names from source files and package directories in a directory.
 
-    Returns the stem (filename without extension) of all Python and R files.
-    This is used to identify first-party modules based on file names.
+    Returns a set of names that could match top-level imports: file stems of
+    Python and R files, and directory names that contain source files
+    (e.g., packages with __init__.py or directories with .R files).
     """
     modules: set[str] = set()
     glob_pattern = "**/*" if recursive else "*"
 
-    # Collect Python modules
+    # Collect Python modules (file stems)
     for file_path in directory.glob(f"{glob_pattern}.py"):
         modules.add(file_path.stem)
 
-    # Collect R modules
+    # Collect R modules (file stems)
     for file_path in directory.glob(f"{glob_pattern}.r"):
         modules.add(file_path.stem)
     for file_path in directory.glob(f"{glob_pattern}.R"):
         modules.add(file_path.stem)
 
+    # Collect package/directory names that contain source files
+    for p in directory.glob(f"{glob_pattern}"):
+        if p.is_dir():
+            has_py = any(p.glob("*.py"))
+            has_r = any(p.glob("*.r")) or any(p.glob("*.R"))
+            if has_py or has_r:
+                modules.add(p.name)
+
     return modules
-
-
-###############################################################################
 
 
 class Extractor:
