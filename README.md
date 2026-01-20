@@ -64,9 +64,7 @@ for file_path, error in result.failed.items():
 
 By default, directories commonly used for vendored or copied code (e.g., `external`, `vendor`, `third_party`, `deps`) are ignored when extracting imports from a repository. This prevents analyzing large bundled dependencies and avoids falsely classifying those packages as first-party.
 
-When an ignored directory contains sub-packages or files (for example `external/utils/__init__.py` or `external/localpkg.R`), the immediate module names (`utils`, `localpkg`) are recorded as *third-party modules* and returned on the `DirectoryExtractionResult` as `ignored_external_modules`. Imports that match those names are classified as third-party by default.
-
-You can override which directories are ignored via the `ignore_directories_list` parameter on `Extractor.extract_from_directory()` (pass an empty set to disable the default ignore list).
+Ignored directories are not scanned for the purpose of promoting module names to first-party or adding them to a third-party whitelist. If you want the analyzer to consider those directories, override the default ignore list by passing `ignore_directories_list=set()` to `Extractor.extract_from_directory()`.
 
 Example:
 
@@ -81,10 +79,8 @@ result = extractor.extract_from_directory(
     ignore_directories_list=set(),  # disable default ignore list
 )
 
-# Names discovered inside ignored directories (treated as third-party):
-print(result.ignored_external_modules)
+# Proceed with `result.extracted` as usual
 ```
-
 ## Processing Notebook Formats
 
 If you want to extract imports from Jupyter notebooks or Rmd files, you should first convert them to their script counterparts using: [py-nb-to-src](https://github.com/evamaxfield/py-nb-to-src) which will convert `.ipynb` of all types (R, Julia, Python, Matlab) to their respective script formats as well as `.Rmd` to `.R` scripts.

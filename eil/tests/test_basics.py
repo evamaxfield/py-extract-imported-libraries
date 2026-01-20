@@ -269,10 +269,7 @@ def test_ignore_external_dir_python(tmp_path: Path) -> None:
     assert app in result.extracted
     libs = result.extracted[app]
     assert "utils" not in libs.first_party
-    assert "utils" in libs.third_party
-    # ignored external modules are reported on the DirectoryExtractionResult
-    assert "utils" in result.ignored_external_modules
-
+    assert "utils" not in libs.third_party
     # If we override to an empty ignore list, the module should be detected as first-party
     result2 = extractor.extract_from_directory(
         tmp_path,
@@ -283,7 +280,6 @@ def test_ignore_external_dir_python(tmp_path: Path) -> None:
     )
     libs2 = result2.extracted[app]
     assert "utils" in libs2.first_party
-    assert "utils" not in result2.ignored_external_modules
 
 
 def test_ignore_external_dir_r(tmp_path: Path) -> None:
@@ -307,8 +303,7 @@ def test_ignore_external_dir_r(tmp_path: Path) -> None:
     assert script in result.extracted
     libs = result.extracted[script]
     assert "localpkg" not in libs.first_party
-    assert "localpkg" in libs.third_party
-    assert "localpkg" in result.ignored_external_modules
+    assert "localpkg" not in libs.third_party
 
     # Override ignore list -> should detect as first-party
     result2 = extractor.extract_from_directory(
@@ -320,4 +315,3 @@ def test_ignore_external_dir_r(tmp_path: Path) -> None:
     )
     libs2 = result2.extracted[script]
     assert "localpkg" in libs2.first_party
-    assert "localpkg" not in result2.ignored_external_modules
