@@ -131,6 +131,12 @@ def _collect_ignored_modules(
         if not any(part in ignore_set for part in rel_parts):
             continue
 
+        # If the path itself is an ignored directory (e.g., 'ext', 'vendored'),
+        # add its name so top-level imports like `import ext` or
+        # `from vendored import foo` are also ignored.
+        if p.name in ignore_set:
+            modules.add(p.name)
+
         for child in p.iterdir():
             if child.is_dir():
                 modules.add(child.name)

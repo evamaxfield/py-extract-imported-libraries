@@ -282,6 +282,55 @@ def test_ignore_external_dir_python(tmp_path: Path) -> None:
     assert "utils" in libs2.first_party
 
 
+def test_ignore_imported_ignored_dir_python(tmp_path: Path) -> None:
+    """Imports of an ignored directory name (e.g., 'ext') should be ignored."""
+    extractor = Extractor()
+
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    (ext / "__init__.py").write_text("")
+    app = tmp_path / "app.py"
+    app.write_text("import ext\nimport requests\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path,
+        extractor_type=ExtractorType.PYTHON,
+        recursive=True,
+        show_progress=False,
+    )
+
+    assert app in result.extracted
+    libs = result.extracted[app]
+    assert "requests" in libs.third_party
+    assert "ext" not in libs.third_party
+
+
+def test_ignore_imported_vendored_dir_python(tmp_path: Path) -> None:
+    """Imports that reference a vendored package (e.g.,
+    'from vendored.blah import foo') should be ignored."""
+    extractor = Extractor()
+
+    vend = tmp_path / "vendored"
+    vend.mkdir()
+    (vend / "__init__.py").write_text("")
+    (vend / "blah.py").write_text("def foo():\n    return 1\n")
+
+    app = tmp_path / "app.py"
+    app.write_text("from vendored.blah import foo\nimport numpy as np\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path,
+        extractor_type=ExtractorType.PYTHON,
+        recursive=True,
+        show_progress=False,
+    )
+
+    assert app in result.extracted
+    libs = result.extracted[app]
+    assert "numpy" in libs.third_party
+    assert "vendored" not in libs.third_party
+
+
 def test_ignore_external_dir_r(tmp_path: Path) -> None:
     """Directories named 'external' (default) should be ignored for R as
     well."""
