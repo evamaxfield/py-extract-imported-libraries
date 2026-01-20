@@ -219,3 +219,33 @@ def test_import_matches_repo_dir_r(tmp_path: Path) -> None:
     assert "localpkg" in libs.first_party
     assert "ggplot2" in libs.third_party
     assert "localpkg" not in libs.third_party
+
+
+def test_r_vector_not_misclassified(tmp_path: Path) -> None:
+    """Ensure variables inside c(...) vectors are not considered imports."""
+    extractor = Extractor()
+
+    script = tmp_path / "vec.R"
+    script.write_text("""
+SALL_var <-c(
+  S_growing_3_init=(No/12),
+  A_growing_3_init=0,
+  I_growing_3_init=0,
+  C_growing_3_init=0,
+  R_growing_3_init=0,
+)
+
+library(ggplot2)
+""")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.R, recursive=False, show_progress=False
+    )
+
+    assert script in result.extracted
+    libs = result.extracted[script]
+    assert "ggplot2" in libs.third_party
+    # Ensure variable-like names are not reported as imports
+    assert "S_growing_3_init" not in libs.third_party
+    assert "C_growing_3_init" not in libs.third_party
+    assert "localpkg" not in libs.third_party

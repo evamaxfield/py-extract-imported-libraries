@@ -318,8 +318,13 @@ class Extractor:
         package_nodes_sorted = sorted(package_nodes, key=lambda n: n.start_byte)
 
         for node in package_nodes_sorted:
+            # Only consider nodes that are part of a namespace operator (lhs of :: or :::)
+            if not node.parent or node.parent.type != "namespace_operator":
+                continue
+
             if (node.start_byte, node.end_byte) in source_arg_positions:
                 continue
+
             pkg_text = code[node.start_byte : node.end_byte].strip("\"'")
             if "/" not in pkg_text and not pkg_text.endswith(".R"):
                 imported_libs.add(pkg_text)
