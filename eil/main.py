@@ -39,33 +39,116 @@ class DirectoryExtractionResult:
 
     extracted: dict[Path, ImportedLibraries] = field(default_factory=dict)
     failed: dict[Path, str] = field(default_factory=dict)
+    # Names discovered under ignored external directories; reported as third-party
+    ignored_external_modules: set[str] = field(default_factory=set)
 
 
 ###############################################################################
+
+
+DEFAULT_IGNORED_DIRS = frozenset(
+    {
+        "external",
+        "ext",
+        "vendor",
+        "vendors",
+        "third_party",
+        "third-party",
+        "thirdparty",
+        "deps",
+        "vendor_packages",
+    }
+)
 
 
 def _collect_files_to_extract(
     directory: Path,
     extractor_type: ExtractorType,
     recursive: bool = False,
+    ignore_dirs: set[str] | None = None,
 ) -> list[tuple[Path, str]]:
-    """Collect all source files in a directory based on extractor type."""
+    """Collect all source files in a directory based on extractor type.
+
+    Parameters
+    ----------
+    directory : Path
+        Base directory to search.
+    extractor_type : ExtractorType
+        Which language types to collect (PYTHON, R, ALL).
+    recursive : bool
+        Whether to search subdirectories.
+    ignore_dirs : set[str] | None
+        Directory names to ignore (e.g., 'external', 'vendor'). Matches any
+        path part equal to the name.
+    """
     files: list[tuple[Path, str]] = []
     glob_pattern = "**/*" if recursive else "*"
+    ignore_set = set(ignore_dirs or ())
+
+    def _is_ignored(path: Path) -> bool:
+        try:
+            rel_parts = path.relative_to(directory).parts
+        except Exception:
+            rel_parts = path.parts
+        return any(part in ignore_set for part in rel_parts)
+
+    def _append_matching(pattern: str, tag: str) -> None:
+        for f in directory.glob(pattern):
+            if not _is_ignored(f):
+                files.append((f, tag))
 
     if extractor_type in (ExtractorType.PYTHON, ExtractorType.ALL):
-        files.extend((f, "python") for f in directory.glob(f"{glob_pattern}.py"))
+        _append_matching(f"{glob_pattern}.py", "python")
 
     if extractor_type in (ExtractorType.R, ExtractorType.ALL):
-        files.extend((f, "r") for f in directory.glob(f"{glob_pattern}.r"))
-        files.extend((f, "r") for f in directory.glob(f"{glob_pattern}.R"))
+        _append_matching(f"{glob_pattern}.r", "r")
+        _append_matching(f"{glob_pattern}.R", "r")
 
     return files
+
+
+def _collect_ignored_external_modules(
+    directory: Path,
+    recursive: bool = False,
+    ignore_dirs: set[str] | None = None,
+) -> set[str]:
+    """Collect module names that live inside ignored external directories.
+
+    For each directory matching a name in `ignore_dirs`, returns the names of
+    immediate child directories and file stems (e.g., `external/utils` ->
+    'utils', or `external/utils.R` -> 'utils'). These are treated as
+    third-party module names by default.
+    """
+    modules: set[str] = set()
+    glob_pattern = "**/*" if recursive else "*"
+    ignore_set = set(ignore_dirs or ())
+
+    # Find directories that match any of the ignore names
+    for p in directory.glob(f"{glob_pattern}"):
+        if not p.is_dir():
+            continue
+        # Check if this path is itself an ignored directory
+        try:
+            rel_parts = p.relative_to(directory).parts
+        except Exception:
+            rel_parts = p.parts
+        if not any(part in ignore_set for part in rel_parts):
+            continue
+
+        # Collect immediate children as external module names
+        for child in p.iterdir():
+            if child.is_dir():
+                modules.add(child.name)
+            elif child.is_file():
+                modules.add(child.stem)
+
+    return modules
 
 
 def _collect_repository_modules(
     directory: Path,
     recursive: bool = False,
+    ignore_dirs: set[str] | None = None,
 ) -> set[str]:
     """
     Collect module names from source files and package directories in a directory.
@@ -73,23 +156,42 @@ def _collect_repository_modules(
     Returns a set of names that could match top-level imports: file stems of
     Python and R files, and directory names that contain source files
     (e.g., packages with __init__.py or directories with .R files).
+
+    Parameters
+    ----------
+    directory : Path
+        Base directory to search.
+    recursive : bool
+        Whether to search subdirectories.
+    ignore_dirs : set[str] | None
+        Directory names to ignore.
     """
     modules: set[str] = set()
     glob_pattern = "**/*" if recursive else "*"
+    ignore_set = set(ignore_dirs or ())
+
+    def _is_ignored(path: Path) -> bool:
+        try:
+            rel_parts = path.relative_to(directory).parts
+        except Exception:
+            rel_parts = path.parts
+        return any(part in ignore_set for part in rel_parts)
+
+    def _add_file_stems(pattern: str) -> None:
+        for file_path in directory.glob(pattern):
+            if not _is_ignored(file_path):
+                modules.add(file_path.stem)
 
     # Collect Python modules (file stems)
-    for file_path in directory.glob(f"{glob_pattern}.py"):
-        modules.add(file_path.stem)
+    _add_file_stems(f"{glob_pattern}.py")
 
     # Collect R modules (file stems)
-    for file_path in directory.glob(f"{glob_pattern}.r"):
-        modules.add(file_path.stem)
-    for file_path in directory.glob(f"{glob_pattern}.R"):
-        modules.add(file_path.stem)
+    _add_file_stems(f"{glob_pattern}.r")
+    _add_file_stems(f"{glob_pattern}.R")
 
     # Collect package/directory names that contain source files
     for p in directory.glob(f"{glob_pattern}"):
-        if p.is_dir():
+        if p.is_dir() and not _is_ignored(p):
             has_py = any(p.glob("*.py"))
             has_r = any(p.glob("*.r")) or any(p.glob("*.R"))
             if has_py or has_r:
@@ -163,21 +265,28 @@ class Extractor:
         first_party: set[str] | None = None,
         stdlib_check_func: Callable[[str], bool] | None = None,
         repo_files: set[str] | None = None,
+        ignored_external_modules: set[str] | None = None,
     ) -> ImportedLibraries:
         """Categorize imports into stdlib, third-party, and first-party."""
         stdlib: set[str] = set()
         third_party: set[str] = set()
         first_party_set = first_party or set()
         repo_files_set = repo_files or set()
+        external_set = ignored_external_modules or set()
 
         for dep in deps:
             # Skip if already identified as first-party
             if dep in first_party_set:
                 continue
 
-            # Check if there's a file in the repository with this name
+            # First-party project files take precedence
             if dep in repo_files_set:
                 first_party_set.add(dep)
+                continue
+
+            # If the dependency name matches an ignored external module, treat as third-party
+            if dep in external_set:
+                third_party.add(dep)
                 continue
 
             if stdlib_check_func:
@@ -246,6 +355,7 @@ class Extractor:
         self: Self,
         code: str,
         repo_files: set[str] | None = None,
+        ignored_external_modules: set[str] | None = None,
     ) -> ImportedLibraries:
         """Extract imported libraries from Python code."""
         self._load_language("python")
@@ -262,6 +372,7 @@ class Extractor:
             self.stdlibs["python"],
             first_party=first_party,
             repo_files=repo_files,
+            ignored_external_modules=ignored_external_modules,
         )
 
     def _r_process_calls(
@@ -334,6 +445,7 @@ class Extractor:
         self: Self,
         code: str,
         repo_files: set[str] | None = None,
+        ignored_external_modules: set[str] | None = None,
     ) -> ImportedLibraries:
         """Extract imported libraries from R code."""
         self._load_language("r")
@@ -356,12 +468,14 @@ class Extractor:
             self.stdlibs["r"],
             first_party=first_party,
             repo_files=repo_files,
+            ignored_external_modules=ignored_external_modules,
         )
 
     def extract_from_file(
         self: Self,
         file_path: str | Path,
         repo_files: set[str] | None = None,
+        ignored_external_modules: set[str] | None = None,
     ) -> ImportedLibraries:
         """Extract imported libraries from a file based on its extension."""
         path = Path(file_path)
@@ -380,7 +494,9 @@ class Extractor:
 
         # Parse and return or handle unsupported extension
         if path.suffix in ext_map:
-            return ext_map[path.suffix](code, repo_files=repo_files)
+            return ext_map[path.suffix](
+                code, repo_files=repo_files, ignored_external_modules=ignored_external_modules
+            )
 
         supported_exts = ", ".join(sorted(set(ext_map.keys())))
         raise ValueError(
@@ -394,6 +510,7 @@ class Extractor:
         recursive: bool = False,
         show_progress: bool = True,
         progress_leave: bool = True,
+        ignore_directories_list: set[str] | None = None,
     ) -> DirectoryExtractionResult:
         """
         Extract imported libraries from all source files in a directory.
@@ -412,6 +529,10 @@ class Extractor:
         progress_leave : bool
             Whether to leave the progress bar visible after completion (default True).
             Set to False to remove the progress bar when done.
+        ignore_directories_list : set[str] | None
+            Directory names to ignore when classifying first-party modules. If
+            None, a default set of common names (e.g., 'external', 'vendor')
+            will be used.
 
         Returns
         -------
@@ -428,10 +549,22 @@ class Extractor:
         if not directory.is_dir():
             raise NotADirectoryError(f"{directory} is not a directory")
 
-        files_to_extract = _collect_files_to_extract(directory, extractor_type, recursive)
-        repo_files = _collect_repository_modules(directory, recursive)
-        result = DirectoryExtractionResult()
+        # Build ignore list defaulting to common names for vendored/copied code
+        if ignore_directories_list is None:
+            ignore_set = set(DEFAULT_IGNORED_DIRS)
+        else:
+            ignore_set = set(ignore_directories_list)
 
+        files_to_extract = _collect_files_to_extract(
+            directory, extractor_type, recursive, ignore_dirs=ignore_set
+        )
+        repo_files = _collect_repository_modules(directory, recursive, ignore_dirs=ignore_set)
+
+        ignored_external_modules = _collect_ignored_external_modules(
+            directory, recursive, ignore_dirs=ignore_set
+        )
+
+        result = DirectoryExtractionResult()
         if not files_to_extract:
             return result
 
@@ -446,9 +579,12 @@ class Extractor:
             progress_bar.set_description(f"Extracting {file_path.name}")
             try:
                 result.extracted[file_path] = self.extract_from_file(
-                    file_path, repo_files=repo_files
+                    file_path,
+                    repo_files=repo_files,
+                    ignored_external_modules=ignored_external_modules,
                 )
             except Exception:
                 result.failed[file_path] = traceback.format_exc()
 
+        result.ignored_external_modules = ignored_external_modules
         return result
