@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
-import traceback
 import re
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -58,6 +58,51 @@ DEFAULT_IGNORED_DIRS = frozenset(
         "vendor_packages",
     }
 )
+
+
+def _is_valid_python_import(name: str) -> bool:
+    """Check if a name is a valid Python import identifier."""
+    # Python imports are Python identifiers (module/package names used in
+    # import statements) and must start with a letter or underscore and
+    # only contain letters, digits, or underscores.
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
+
+
+def _is_valid_r_package(name: str) -> bool:
+    """Check if a name is a valid R package name."""
+    # CRAN package names typically start with a letter and may contain
+    # letters, digits and dots. Be conservative: require starting letter
+    # and only allow letters, digits and dots.
+    return bool(re.match(r"^[A-Za-z][A-Za-z0-9.]*$", name))
+
+
+def _is_valid_r_first_party(name: str) -> bool:
+    """Check if a name is a valid R first-party file stem."""
+    # First-party R file stems may contain underscores and hyphens; allow
+    # letters, digits, underscores, dots and hyphens but require a
+    # starting letter or underscore.
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*$", name))
+
+
+def _filter_names(names: set[str], lang: str | None, category: str = "third") -> set[str]:
+    """Filter names based on language-specific validation rules."""
+    if lang == "python":
+        fn = _is_valid_python_import
+    elif lang == "r":
+        fn = _is_valid_r_first_party if category == "first" else _is_valid_r_package
+    else:
+        return set(names)
+    return {n for n in names if fn(n)}
+
+
+def _is_descendant(node, ancestor) -> bool:
+    """Check if node is a descendant of ancestor in the AST."""
+    cur = node.parent
+    while cur:
+        if cur == ancestor:
+            return True
+        cur = cur.parent
+    return False
 
 
 def _collect_files_to_extract(
@@ -308,34 +353,6 @@ class Extractor:
             else:
                 third_party.add(dep)
 
-        # Language-specific validation helpers
-        def _is_valid_python_import(name: str) -> bool:
-            # Python imports are Python identifiers (module/package names used in
-            # import statements) and must start with a letter or underscore and
-            # only contain letters, digits, or underscores.
-            return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
-
-        def _is_valid_r_package(name: str) -> bool:
-            # CRAN package names typically start with a letter and may contain
-            # letters, digits and dots. Be conservative: require starting letter
-            # and only allow letters, digits and dots.
-            return bool(re.match(r"^[A-Za-z][A-Za-z0-9.]*$", name))
-
-        def _is_valid_r_first_party(name: str) -> bool:
-            # First-party R file stems may contain underscores and hyphens; allow
-            # letters, digits, underscores, dots and hyphens but require a
-            # starting letter or underscore.
-            return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*$", name))
-
-        def _filter_names(names: set[str], lang: str | None, category: str = "third") -> set[str]:
-            if lang == "python":
-                fn = _is_valid_python_import
-            elif lang == "r":
-                fn = _is_valid_r_first_party if category == "first" else _is_valid_r_package
-            else:
-                return set(names)
-            return {n for n in names if fn(n)}
-
         stdlib = _filter_names(stdlib, language, category="stdlib")
         third_party = _filter_names(third_party, language, category="third")
         first_party_set = _filter_names(first_party_set, language, category="first")
@@ -417,6 +434,27 @@ class Extractor:
             language="python",
         )
 
+    def _r_select_package_node(self, candidate_pkgs: list, code: str):
+        """Select the best package node from candidates, avoiding named argument names."""
+        # Prefer the first candidate that is not the name of a named argument
+        for pkg_node in candidate_pkgs:
+            pos = pkg_node.end_byte
+            while pos < len(code) and code[pos].isspace():
+                pos += 1
+            if pos < len(code) and code[pos] == "=":
+                # This is the argument name (e.g., `package =` or `family =`),
+                # skip it in favor of the next candidate (likely the value).
+                continue
+            return pkg_node
+
+        # If we didn't find a non-named-arg candidate, prefer a string literal
+        for pkg_node in candidate_pkgs:
+            text = code[pkg_node.start_byte : pkg_node.end_byte].strip()
+            if text.startswith('"') or text.startswith("'"):
+                return pkg_node
+
+        return None
+
     def _r_process_calls(
         self, captures: dict, code: str
     ) -> tuple[set[str], set[str], set[tuple[int, int]]]:
@@ -444,15 +482,6 @@ class Extractor:
             if not call_node:
                 continue
 
-            # Helper: is `node` a descendant of `ancestor`?
-            def _is_descendant(node, ancestor):
-                cur = node.parent
-                while cur:
-                    if cur == ancestor:
-                        return True
-                    cur = cur.parent
-                return False
-
             # Collect package nodes that are part of the same call
             candidate_pkgs = [
                 p
@@ -463,27 +492,7 @@ class Extractor:
             if not candidate_pkgs:
                 continue
 
-            # Prefer the first candidate that is not the name of a named argument
-            chosen_pkg = None
-            for pkg_node in candidate_pkgs:
-                pos = pkg_node.end_byte
-                while pos < len(code) and code[pos].isspace():
-                    pos += 1
-                if pos < len(code) and code[pos] == "=":
-                    # This is the argument name (e.g., `package =` or `family =`),
-                    # skip it in favor of the next candidate (likely the value).
-                    continue
-                chosen_pkg = pkg_node
-                break
-
-            # If we didn't find a non-named-arg candidate, prefer a string literal
-            if not chosen_pkg:
-                for pkg_node in candidate_pkgs:
-                    text = code[pkg_node.start_byte : pkg_node.end_byte].strip()
-                    if text.startswith('"') or text.startswith("'"):
-                        chosen_pkg = pkg_node
-                        break
-
+            chosen_pkg = self._r_select_package_node(candidate_pkgs, code)
             if not chosen_pkg:
                 continue
 

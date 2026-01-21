@@ -255,7 +255,9 @@ library(ggplot2)
 def test_r_named_args_not_misclassified() -> None:
     """Ensure named arguments in arbitrary function calls are not treated as imports."""
     extractor = Extractor()
-    script = "result <- VineCopula::BiCopPar2Tau(family = 5, par = range(train.copula.parameter))"
+    script = (
+        "result <- VineCopula::BiCopPar2Tau(family = 5, par = range(train.copula.parameter))"
+    )
     libs = extractor.extract_r_libraries(script)
 
     # The namespace operator `VineCopula::...` should be recognized
@@ -282,7 +284,8 @@ def test_r_library_named_package_value() -> None:
 def test_filter_invalid_package_names_r() -> None:
     """Invalid R package-like names should be dropped when categorizing."""
     extractor = Extractor()
-    # Provide some names that should be filtered for R (must start with letter, only letters/digits/dot)
+    # Provide some names that should be filtered for R
+    # (must start with letter, only letters/digits/dot)
     res = extractor._categorize_libraries(
         deps={"goodpkg", "bad-name!", "1numstart"},
         stdlib_set=extractor.stdlibs["r"],
