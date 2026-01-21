@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import traceback
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -267,11 +268,15 @@ class Extractor:
         stdlib_check_func: Callable[[str], bool] | None = None,
         repo_files: set[str] | None = None,
         ignored_modules: set[str] | None = None,
+        language: str | None = None,
     ) -> ImportedLibraries:
         """Categorize imports into stdlib, third-party, and first-party.
 
         Any name in `ignored_modules` will be skipped entirely (not added to
         third_party or first_party) — this is used to ignore vendored code.
+
+        A language may be provided to apply language-specific package-name
+        validation rules; invalid names are dropped from the resulting sets.
         """
         stdlib: set[str] = set()
         third_party: set[str] = set()
@@ -302,6 +307,38 @@ class Extractor:
                 stdlib.add(dep)
             else:
                 third_party.add(dep)
+
+        # Language-specific validation helpers
+        def _is_valid_python_import(name: str) -> bool:
+            # Python imports are Python identifiers (module/package names used in
+            # import statements) and must start with a letter or underscore and
+            # only contain letters, digits, or underscores.
+            return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
+
+        def _is_valid_r_package(name: str) -> bool:
+            # CRAN package names typically start with a letter and may contain
+            # letters, digits and dots. Be conservative: require starting letter
+            # and only allow letters, digits and dots.
+            return bool(re.match(r"^[A-Za-z][A-Za-z0-9.]*$", name))
+
+        def _is_valid_r_first_party(name: str) -> bool:
+            # First-party R file stems may contain underscores and hyphens; allow
+            # letters, digits, underscores, dots and hyphens but require a
+            # starting letter or underscore.
+            return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_.-]*$", name))
+
+        def _filter_names(names: set[str], lang: str | None, category: str = "third") -> set[str]:
+            if lang == "python":
+                fn = _is_valid_python_import
+            elif lang == "r":
+                fn = _is_valid_r_first_party if category == "first" else _is_valid_r_package
+            else:
+                return set(names)
+            return {n for n in names if fn(n)}
+
+        stdlib = _filter_names(stdlib, language, category="stdlib")
+        third_party = _filter_names(third_party, language, category="third")
+        first_party_set = _filter_names(first_party_set, language, category="first")
 
         return ImportedLibraries(
             stdlib=stdlib, third_party=third_party, first_party=first_party_set
@@ -377,6 +414,7 @@ class Extractor:
             first_party=first_party,
             repo_files=repo_files,
             ignored_modules=ignored_modules,
+            language="python",
         )
 
     def _r_process_calls(
@@ -394,30 +432,67 @@ class Extractor:
 
         for func_node in func_nodes_sorted:
             func_name = code[func_node.start_byte : func_node.end_byte]
-            closest_pkg = None
-            min_distance = float("inf")
 
-            for pkg_node in package_nodes_sorted:
-                if pkg_node.start_byte > func_node.start_byte:
-                    distance = pkg_node.start_byte - func_node.start_byte
-                    if distance < min_distance:
-                        has_func_between = any(
-                            func_node.start_byte < f.start_byte < pkg_node.start_byte
-                            for f in func_nodes_sorted
-                        )
-                        if not has_func_between:
-                            closest_pkg = pkg_node
-                            min_distance = distance
-
-            if not closest_pkg:
+            # Only consider known import/source functions
+            if func_name not in ("library", "require", "source"):
                 continue
 
-            pkg_text = code[closest_pkg.start_byte : closest_pkg.end_byte].strip("\"'")
+            # Find the enclosing call node for this function
+            call_node = func_node.parent
+            while call_node and call_node.type != "call":
+                call_node = call_node.parent
+            if not call_node:
+                continue
+
+            # Helper: is `node` a descendant of `ancestor`?
+            def _is_descendant(node, ancestor):
+                cur = node.parent
+                while cur:
+                    if cur == ancestor:
+                        return True
+                    cur = cur.parent
+                return False
+
+            # Collect package nodes that are part of the same call
+            candidate_pkgs = [
+                p
+                for p in package_nodes_sorted
+                if p.start_byte > func_node.start_byte and _is_descendant(p, call_node)
+            ]
+
+            if not candidate_pkgs:
+                continue
+
+            # Prefer the first candidate that is not the name of a named argument
+            chosen_pkg = None
+            for pkg_node in candidate_pkgs:
+                pos = pkg_node.end_byte
+                while pos < len(code) and code[pos].isspace():
+                    pos += 1
+                if pos < len(code) and code[pos] == "=":
+                    # This is the argument name (e.g., `package =` or `family =`),
+                    # skip it in favor of the next candidate (likely the value).
+                    continue
+                chosen_pkg = pkg_node
+                break
+
+            # If we didn't find a non-named-arg candidate, prefer a string literal
+            if not chosen_pkg:
+                for pkg_node in candidate_pkgs:
+                    text = code[pkg_node.start_byte : pkg_node.end_byte].strip()
+                    if text.startswith('"') or text.startswith("'"):
+                        chosen_pkg = pkg_node
+                        break
+
+            if not chosen_pkg:
+                continue
+
+            pkg_text = code[chosen_pkg.start_byte : chosen_pkg.end_byte].strip("\"'")
 
             if func_name in ("library", "require"):
                 imported_libs.add(pkg_text)
             elif func_name == "source":
-                source_arg_positions.add((closest_pkg.start_byte, closest_pkg.end_byte))
+                source_arg_positions.add((chosen_pkg.start_byte, chosen_pkg.end_byte))
                 base_name = Path(pkg_text).stem
                 if base_name:
                     first_party.add(base_name)
@@ -473,6 +548,7 @@ class Extractor:
             first_party=first_party,
             repo_files=repo_files,
             ignored_modules=ignored_modules,
+            language="r",
         )
 
     def extract_from_file(

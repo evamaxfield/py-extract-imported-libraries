@@ -86,6 +86,7 @@ def test_library_extraction_from_file() -> None:
         "pathlib",
         "traceback",
         "typing",
+        "re",
     }
 
     # Check third_party
@@ -249,6 +250,60 @@ library(ggplot2)
     assert "S_growing_3_init" not in libs.third_party
     assert "C_growing_3_init" not in libs.third_party
     assert "localpkg" not in libs.third_party
+
+
+def test_r_named_args_not_misclassified() -> None:
+    """Ensure named arguments in arbitrary function calls are not treated as imports."""
+    extractor = Extractor()
+    script = "result <- VineCopula::BiCopPar2Tau(family = 5, par = range(train.copula.parameter))"
+    libs = extractor.extract_r_libraries(script)
+
+    # The namespace operator `VineCopula::...` should be recognized
+    assert "VineCopula" in libs.third_party
+
+    # Parameter names should not be classified as imports
+    assert "family" not in libs.third_party
+    assert "par" not in libs.third_party
+    assert "family" not in libs.stdlib
+    assert "par" not in libs.stdlib
+    assert "family" not in libs.first_party
+    assert "par" not in libs.first_party
+
+
+def test_r_library_named_package_value() -> None:
+    """Ensure named `package = ...` values are recognized as packages."""
+    extractor = Extractor()
+    script = 'library(package = "ggplot2")\nrequire(package = dplyr)\n'
+    libs = extractor.extract_r_libraries(script)
+    assert "ggplot2" in libs.third_party
+    assert "dplyr" in libs.third_party
+
+
+def test_filter_invalid_package_names_r() -> None:
+    """Invalid R package-like names should be dropped when categorizing."""
+    extractor = Extractor()
+    # Provide some names that should be filtered for R (must start with letter, only letters/digits/dot)
+    res = extractor._categorize_libraries(
+        deps={"goodpkg", "bad-name!", "1numstart"},
+        stdlib_set=extractor.stdlibs["r"],
+        language="r",
+    )
+    assert "goodpkg" in res.third_party
+    assert "bad-name!" not in res.third_party
+    assert "1numstart" not in res.third_party
+
+
+def test_filter_invalid_package_names_python() -> None:
+    """Invalid Python import-like names should be dropped when categorizing."""
+    extractor = Extractor()
+    res = extractor._categorize_libraries(
+        deps={"valid_module", "bad-name!", "1startswithdigit"},
+        stdlib_set=extractor.stdlibs["python"],
+        language="python",
+    )
+    assert "valid_module" in res.third_party
+    assert "bad-name!" not in res.third_party
+    assert "1startswithdigit" not in res.third_party
 
 
 def test_ignore_external_dir_python(tmp_path: Path) -> None:
