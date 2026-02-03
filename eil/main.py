@@ -361,36 +361,46 @@ class Extractor:
             stdlib=stdlib, third_party=third_party, first_party=first_party_set
         )
 
-    def _python_absolute_imports(self, captures: dict, code: str) -> set[str]:
+    def _python_absolute_imports(self, captures: dict, code_bytes: bytes) -> set[str]:
         """Return top-level names from absolute import captures."""
         libs: set[str] = set()
         for node in captures.get("import", []):
             parent = node.parent
             if parent and parent.type == "relative_import":
                 continue
-            dep_name = code[node.start_byte : node.end_byte]
+            dep_name = code_bytes[node.start_byte : node.end_byte].decode("utf-8")
             libs.add(dep_name.split(".")[0])
         return libs
 
-    def _python_extract_from_import_statement(self, import_statement, code: str) -> str | None:
+    def _python_extract_from_import_statement(
+        self, import_statement, code_bytes: bytes
+    ) -> str | None:
         """Check an import_from_statement and return the top-level module if present."""
         for child in import_statement.children:
             if child.type == "dotted_name":
-                return code[child.start_byte : child.end_byte].split(".")[0]
+                return (
+                    code_bytes[child.start_byte : child.end_byte].decode("utf-8").split(".")[0]
+                )
             if child.type == "aliased_import":
                 for subchild in child.children:
                     if subchild.type == "dotted_name":
-                        return code[subchild.start_byte : subchild.end_byte].split(".")[0]
+                        return (
+                            code_bytes[subchild.start_byte : subchild.end_byte]
+                            .decode("utf-8")
+                            .split(".")[0]
+                        )
         return None
 
-    def _python_relative_dotted_name(self, node, code: str) -> str | None:
+    def _python_relative_dotted_name(self, node, code_bytes: bytes) -> str | None:
         """Return top-level name from a dotted_name child in a relative import node."""
         for child in node.children:
             if child.type == "dotted_name":
-                return code[child.start_byte : child.end_byte].split(".")[0]
+                return (
+                    code_bytes[child.start_byte : child.end_byte].decode("utf-8").split(".")[0]
+                )
         return None
 
-    def _python_relative_imports(self, captures: dict, code: str) -> set[str]:
+    def _python_relative_imports(self, captures: dict, code_bytes: bytes) -> set[str]:
         """Return module names from relative import captures (first-party)."""
         first_party: set[str] = set()
         for node in captures.get("relative_import", []):
@@ -398,13 +408,13 @@ class Extractor:
             if not import_statement or import_statement.type != "import_from_statement":
                 continue
 
-            dotted = self._python_relative_dotted_name(node, code)
+            dotted = self._python_relative_dotted_name(node, code_bytes)
             if dotted:
                 first_party.add(dotted)
                 continue
 
             # Fallback: use helper to get the imported module from the import statement
-            module = self._python_extract_from_import_statement(import_statement, code)
+            module = self._python_extract_from_import_statement(import_statement, code_bytes)
             if module:
                 first_party.add(module)
         return first_party
@@ -417,13 +427,14 @@ class Extractor:
     ) -> ImportedLibraries:
         """Extract imported libraries from Python code."""
         self._load_language("python")
-        tree = self.parsers["python"].parse(bytes(code, "utf8"))
+        code_bytes = code.encode("utf-8")
+        tree = self.parsers["python"].parse(code_bytes)
 
         query_cursor = QueryCursor(self.queries["python"])
         captures = query_cursor.captures(tree.root_node)
 
-        imported_libs = self._python_absolute_imports(captures, code)
-        first_party = self._python_relative_imports(captures, code)
+        imported_libs = self._python_absolute_imports(captures, code_bytes)
+        first_party = self._python_relative_imports(captures, code_bytes)
 
         return self._categorize_libraries(
             imported_libs,
@@ -434,14 +445,14 @@ class Extractor:
             language="python",
         )
 
-    def _r_select_package_node(self, candidate_pkgs: list, code: str):
+    def _r_select_package_node(self, candidate_pkgs: list, code_bytes: bytes):
         """Select the best package node from candidates, avoiding named argument names."""
         # Prefer the first candidate that is not the name of a named argument
         for pkg_node in candidate_pkgs:
             pos = pkg_node.end_byte
-            while pos < len(code) and code[pos].isspace():
+            while pos < len(code_bytes) and code_bytes[pos : pos + 1].isspace():
                 pos += 1
-            if pos < len(code) and code[pos] == "=":
+            if pos < len(code_bytes) and code_bytes[pos : pos + 1] == b"=":
                 # This is the argument name (e.g., `package =` or `family =`),
                 # skip it in favor of the next candidate (likely the value).
                 continue
@@ -449,14 +460,14 @@ class Extractor:
 
         # If we didn't find a non-named-arg candidate, prefer a string literal
         for pkg_node in candidate_pkgs:
-            text = code[pkg_node.start_byte : pkg_node.end_byte].strip()
+            text = code_bytes[pkg_node.start_byte : pkg_node.end_byte].decode("utf-8").strip()
             if text.startswith('"') or text.startswith("'"):
                 return pkg_node
 
         return None
 
     def _r_process_calls(
-        self, captures: dict, code: str
+        self, captures: dict, code_bytes: bytes
     ) -> tuple[set[str], set[str], set[tuple[int, int]]]:
         """Process library/require/source calls and return imports and source positions."""
         imported_libs: set[str] = set()
@@ -469,7 +480,7 @@ class Extractor:
         package_nodes_sorted = sorted(package_nodes, key=lambda n: n.start_byte)
 
         for func_node in func_nodes_sorted:
-            func_name = code[func_node.start_byte : func_node.end_byte]
+            func_name = code_bytes[func_node.start_byte : func_node.end_byte].decode("utf-8")
 
             # Only consider known import/source functions
             if func_name not in ("library", "require", "source"):
@@ -492,11 +503,15 @@ class Extractor:
             if not candidate_pkgs:
                 continue
 
-            chosen_pkg = self._r_select_package_node(candidate_pkgs, code)
+            chosen_pkg = self._r_select_package_node(candidate_pkgs, code_bytes)
             if not chosen_pkg:
                 continue
 
-            pkg_text = code[chosen_pkg.start_byte : chosen_pkg.end_byte].strip("\"'")
+            pkg_text = (
+                code_bytes[chosen_pkg.start_byte : chosen_pkg.end_byte]
+                .decode("utf-8")
+                .strip("\"'")
+            )
 
             if func_name in ("library", "require"):
                 imported_libs.add(pkg_text)
@@ -509,7 +524,7 @@ class Extractor:
         return imported_libs, first_party, source_arg_positions
 
     def _r_process_namespace_ops(
-        self, captures: dict, code: str, source_arg_positions: set[tuple[int, int]]
+        self, captures: dict, code_bytes: bytes, source_arg_positions: set[tuple[int, int]]
     ) -> set[str]:
         """Process :: and ::: namespace operators to extract package names."""
         imported_libs: set[str] = set()
@@ -524,7 +539,7 @@ class Extractor:
             if (node.start_byte, node.end_byte) in source_arg_positions:
                 continue
 
-            pkg_text = code[node.start_byte : node.end_byte].strip("\"'")
+            pkg_text = code_bytes[node.start_byte : node.end_byte].decode("utf-8").strip("\"'")
             if "/" not in pkg_text and not pkg_text.endswith(".R"):
                 imported_libs.add(pkg_text)
         return imported_libs
@@ -537,16 +552,17 @@ class Extractor:
     ) -> ImportedLibraries:
         """Extract imported libraries from R code."""
         self._load_language("r")
-        tree = self.parsers["r"].parse(bytes(code, "utf8"))
+        code_bytes = code.encode("utf-8")
+        tree = self.parsers["r"].parse(code_bytes)
 
         query_cursor = QueryCursor(self.queries["r"])
         captures = query_cursor.captures(tree.root_node)
 
         imported_from_calls, first_party, source_arg_positions = self._r_process_calls(
-            captures, code
+            captures, code_bytes
         )
         imported_from_namespace = self._r_process_namespace_ops(
-            captures, code, source_arg_positions
+            captures, code_bytes, source_arg_positions
         )
 
         imported_libs = imported_from_calls.union(imported_from_namespace)
@@ -571,8 +587,9 @@ class Extractor:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
-        # Parse
-        code = path.read_text(encoding="utf-8")
+        # Read file content and handle BOM properly
+        # Use utf-8-sig to automatically remove BOM if present
+        code = path.read_text(encoding="utf-8-sig")
 
         # Map file extensions to extraction methods
         ext_map = {

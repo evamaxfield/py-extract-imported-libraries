@@ -422,3 +422,13 @@ def test_ignore_external_dir_r(tmp_path: Path) -> None:
     )
     libs2 = result2.extracted[script]
     assert "localpkg" in libs2.first_party
+
+
+def test_file_with_multibyte_characters() -> None:
+    """Test extraction from a file that contains multibyte characters."""
+    bom_file = Path(__file__).parent / "resources" / "multibyte-chars-file.py"
+    extracted_libs = INITIALIZED_EXTRACTOR.extract_from_file(bom_file)
+
+    assert extracted_libs.stdlib == {"datetime"}
+    assert extracted_libs.third_party == {"numpy", "pandas", "sklearn"}
+    assert extracted_libs.first_party == set()
