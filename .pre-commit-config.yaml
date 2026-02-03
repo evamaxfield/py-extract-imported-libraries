@@ -2,7 +2,7 @@ repos:
 
   # Standard Python Files
   - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.12.12
+    rev: v0.14.14
     hooks:
       - id: ruff-check
         args: ["--fix"]
@@ -15,13 +15,13 @@ repos:
   #   hooks:
   #     - id: mypy
 
-  - repo: local
-    hooks:
-      - id: ty-check
-        name: ty check
-        entry: ty check
-        language: system
-        types: [python]
+  # - repo: local
+  #   hooks:
+  #     - id: ty-check
+  #       name: ty check
+  #       entry: ty check
+  #       language: system
+  #       types: [python]
 
   # Notebooks
   - repo: https://github.com/nbQA-dev/nbQA

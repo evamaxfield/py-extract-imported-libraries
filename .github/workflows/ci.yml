@@ -32,7 +32,7 @@ jobs:
     - name: Lint
       run: |
         source .venv/bin/activate
-        just lint
+        just check
 
   # Run tests
   test:

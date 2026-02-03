@@ -29,6 +29,15 @@ install:
 lint:
 	prek run --all-files
 
+# type check all files
+type-check:
+	ty check
+
+# lint, format, and type check all files
+check:
+	just lint
+	just type-check
+
 # run all tests
 test:
 	pytest
