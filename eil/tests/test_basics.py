@@ -424,6 +424,155 @@ def test_ignore_external_dir_r(tmp_path: Path) -> None:
     assert "localpkg" in libs2.first_party
 
 
+def test_ipynb_checkpoints_dir_ignored(tmp_path: Path) -> None:
+    """Files inside .ipynb_checkpoints/ are ignored by default."""
+    extractor = Extractor()
+
+    checkpoints = tmp_path / ".ipynb_checkpoints"
+    checkpoints.mkdir()
+    (checkpoints / "notebook-checkpoint.ipynb").write_text("import numpy\n")
+
+    app = tmp_path / "app.py"
+    app.write_text("import requests\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.PYTHON, recursive=True, show_progress=False
+    )
+
+    # Checkpoint file should be skipped entirely
+    checkpoint_file = checkpoints / "notebook-checkpoint.ipynb"
+    assert checkpoint_file not in result.extracted
+    assert checkpoint_file not in result.failed
+    # app.py should still be processed
+    assert app in result.extracted
+    assert "requests" in result.extracted[app].third_party
+
+
+def test_install_r_file_ignored(tmp_path: Path) -> None:
+    """install.R (R dependency-installation script) is skipped by default."""
+    extractor = Extractor()
+
+    install_r = tmp_path / "install.R"
+    install_r.write_text("library(BiocManager)\nremotes::install_github('user/pkg')\n")
+    script = tmp_path / "script.R"
+    script.write_text("library(ggplot2)\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.R, recursive=False, show_progress=False
+    )
+
+    assert install_r not in result.extracted
+    assert install_r not in result.failed
+    assert script in result.extracted
+    assert "ggplot2" in result.extracted[script].third_party
+
+
+def test_renv_dir_ignored(tmp_path: Path) -> None:
+    """Files inside renv/ are ignored by default."""
+    extractor = Extractor()
+
+    renv_dir = tmp_path / "renv"
+    renv_dir.mkdir()
+    (renv_dir / "activate.R").write_text("library(renv)\n")
+
+    script = tmp_path / "script.R"
+    script.write_text("library(ggplot2)\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.R, recursive=True, show_progress=False
+    )
+
+    activate = renv_dir / "activate.R"
+    assert activate not in result.extracted
+    assert activate not in result.failed
+    assert script in result.extracted
+    assert "ggplot2" in result.extracted[script].third_party
+
+
+def test_default_ignored_files_skipped(tmp_path: Path) -> None:
+    """Files in DEFAULT_IGNORED_FILES (e.g., setup.py) are skipped by default."""
+    extractor = Extractor()
+
+    setup = tmp_path / "setup.py"
+    setup.write_text("import setuptools\nsetuptools.setup(name='mypkg')\n")
+    app = tmp_path / "app.py"
+    app.write_text("import requests\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.PYTHON, recursive=False, show_progress=False
+    )
+
+    # setup.py should be silently skipped
+    assert setup not in result.extracted
+    assert setup not in result.failed
+    # app.py should still be processed
+    assert app in result.extracted
+    assert "requests" in result.extracted[app].third_party
+
+
+def test_ignore_files_list_override(tmp_path: Path) -> None:
+    """Passing ignore_files_list=set() disables the default file ignore list."""
+    extractor = Extractor()
+
+    setup = tmp_path / "setup.py"
+    setup.write_text("import setuptools\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path,
+        extractor_type=ExtractorType.PYTHON,
+        recursive=False,
+        show_progress=False,
+        ignore_files_list=set(),
+    )
+
+    # With an empty override, setup.py should be extracted
+    assert setup in result.extracted
+
+
+def test_local_package_dotted_import_first_party(tmp_path: Path) -> None:
+    """'from model.model_utils import x' classifies 'model' as first-party
+    when model/ is a sibling directory containing Python files."""
+    extractor = Extractor()
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model_utils.py").write_text("def some_func(): pass\n")
+    (model_dir / "model_inference.py").write_text("def infer(): pass\n")
+
+    main = tmp_path / "main.py"
+    main.write_text("from model.model_utils import some_func\nimport numpy as np\n")
+
+    result = extractor.extract_from_directory(
+        tmp_path, extractor_type=ExtractorType.PYTHON, recursive=False, show_progress=False
+    )
+
+    assert main in result.extracted
+    libs = result.extracted[main]
+    assert "model" in libs.first_party
+    assert "model" not in libs.third_party
+    assert "numpy" in libs.third_party
+
+
+def test_extract_from_file_auto_discovers_local_package(tmp_path: Path) -> None:
+    """extract_from_file() auto-scans the parent directory so sibling packages
+    are classified as first-party even without an explicit repo_files argument."""
+    extractor = Extractor()
+
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model_utils.py").write_text("def some_func(): pass\n")
+
+    main = tmp_path / "main.py"
+    main.write_text("from model.model_utils import some_func\nimport numpy as np\n")
+
+    # Call extract_from_file without repo_files — auto-discovery should kick in
+    libs = extractor.extract_from_file(main)
+
+    assert "model" in libs.first_party
+    assert "model" not in libs.third_party
+    assert "numpy" in libs.third_party
+
+
 def test_file_with_multibyte_characters() -> None:
     """Test extraction from a file that contains multibyte characters."""
     bom_file = Path(__file__).parent / "resources" / "multibyte-chars-file.py"

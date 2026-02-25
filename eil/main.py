@@ -56,6 +56,21 @@ DEFAULT_IGNORED_DIRS = frozenset(
         "thirdparty",
         "deps",
         "vendor_packages",
+        ".ipynb_checkpoints",
+        "renv",
+    }
+)
+
+DEFAULT_IGNORED_FILES = frozenset(
+    {
+        "setup.py",
+        "noxfile.py",
+        "pavement.py",
+        "fabfile.py",
+        "conftest.py",
+        "install.R",
+        "setup.R",
+        "configure.R",
     }
 )
 
@@ -110,6 +125,7 @@ def _collect_files_to_extract(
     extractor_type: ExtractorType,
     recursive: bool = False,
     ignore_dirs: set[str] | None = None,
+    ignore_files: set[str] | None = None,
 ) -> list[tuple[Path, str]]:
     """Collect all source files in a directory based on extractor type.
 
@@ -124,10 +140,13 @@ def _collect_files_to_extract(
     ignore_dirs : set[str] | None
         Directory names to ignore (e.g., 'external', 'vendor'). Matches any
         path part equal to the name.
+    ignore_files : set[str] | None
+        File names to skip entirely (e.g., 'setup.py', 'conftest.py').
     """
     files: list[tuple[Path, str]] = []
     glob_pattern = "**/*" if recursive else "*"
     ignore_set = set(ignore_dirs or ())
+    ignore_files_set = set(ignore_files or ())
 
     def _is_ignored(path: Path) -> bool:
         try:
@@ -139,6 +158,8 @@ def _collect_files_to_extract(
     def _append_matching(pattern: str, tag: str) -> None:
         for f in directory.glob(pattern):
             if not _is_ignored(f):
+                if ignore_files_set and f.name in ignore_files_set:
+                    continue
                 files.append((f, tag))
 
     if extractor_type in (ExtractorType.PYTHON, ExtractorType.ALL):
@@ -236,11 +257,14 @@ def _collect_repository_modules(
     _add_file_stems(f"{glob_pattern}.r")
     _add_file_stems(f"{glob_pattern}.R")
 
-    # Collect package/directory names that contain source files
+    # Collect package/directory names that contain source files.
+    # Use rglob so directories with source files only in subdirectories
+    # (e.g., namespace packages without __init__.py at the top level) are
+    # still recognized as local modules.
     for p in directory.glob(f"{glob_pattern}"):
         if p.is_dir() and not _is_ignored(p):
-            has_py = any(p.glob("*.py"))
-            has_r = any(p.glob("*.r")) or any(p.glob("*.R"))
+            has_py = any(p.rglob("*.py"))
+            has_r = any(p.rglob("*.r")) or any(p.rglob("*.R"))
             if has_py or has_r:
                 modules.add(p.name)
 
@@ -587,6 +611,12 @@ class Extractor:
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
 
+        # Auto-discover local modules from the parent directory when repo_files
+        # is not provided. This ensures imports like `from model.utils import x`
+        # are classified as first-party when `model/` is a sibling directory.
+        if repo_files is None:
+            repo_files = _collect_repository_modules(path.parent, recursive=False)
+
         # Read file content and handle BOM properly
         # Use utf-8-sig to automatically remove BOM if present
         code = path.read_text(encoding="utf-8-sig")
@@ -619,6 +649,7 @@ class Extractor:
         show_progress: bool = True,
         progress_leave: bool = True,
         ignore_directories_list: set[str] | None = None,
+        ignore_files_list: set[str] | None = None,
     ) -> DirectoryExtractionResult:
         """
         Extract imported libraries from all source files in a directory.
@@ -641,6 +672,10 @@ class Extractor:
             Directory names to ignore when classifying first-party modules. If
             None, a default set of common names (e.g., 'external', 'vendor')
             will be used.
+        ignore_files_list : set[str] | None
+            File names to skip entirely during extraction (e.g., 'setup.py',
+            'conftest.py'). If None, a default set of common packaging and
+            build files will be used.
 
         Returns
         -------
@@ -663,8 +698,18 @@ class Extractor:
         else:
             ignore_set = set(ignore_directories_list)
 
+        # Build file ignore list defaulting to common packaging/build files
+        if ignore_files_list is None:
+            ignore_files_set = set(DEFAULT_IGNORED_FILES)
+        else:
+            ignore_files_set = set(ignore_files_list)
+
         files_to_extract = _collect_files_to_extract(
-            directory, extractor_type, recursive, ignore_dirs=ignore_set
+            directory,
+            extractor_type,
+            recursive,
+            ignore_dirs=ignore_set,
+            ignore_files=ignore_files_set,
         )
         repo_files = _collect_repository_modules(directory, recursive, ignore_dirs=ignore_set)
 
