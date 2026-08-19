@@ -43,7 +43,7 @@ dev = [
 ]
 lint = [
   "prek>=0.2.29",
-  "ty>=0.0.12",
+  "pyrefly>=1",
 ]
 test = [
   "pytest>=9",
@@ -113,10 +113,5 @@ lint.extend-ignore = [
 "**/tests/*.py" = ["D"]
 "**/migrations/*.py" = ["D"]
 
-[tool.ty.src]
-exclude = [
-  ".github",
-  ".pre-commit-config.yaml",
-  "pyproject.toml",
-  "**/tests/resources",
-]
+[tool.pyrefly]
+project-excludes = ["**/tests/resources/**"]

@@ -31,7 +31,7 @@ lint:
 
 # type check all files
 type-check:
-	ty check
+	pyrefly check
 
 # lint, format, and type check all files
 check:
