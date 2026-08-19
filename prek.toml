@@ -11,7 +11,7 @@ hooks = [
 
 [[repos]]
 repo = "https://github.com/facebook/pyrefly-pre-commit"
-rev = "0.61.0" # Pyrefly pre-commit hook version.
+rev = "1.2.0" # Pyrefly pre-commit hook version.
 hooks = [
   {
     id = "pyrefly-check",
